@@ -1,0 +1,7 @@
+# Python >= 3.9
+tortoise-orm>=0.21.0
+
+# 可选数据库驱动：
+# - SQLite（本地调试）：tortoise-orm 自带 aiosqlite 依赖，无需额外安装
+# - PostgreSQL（生产环境）：取消下行注释后安装 asyncpg
+# asyncpg>=0.29.0
