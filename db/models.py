@@ -34,6 +34,41 @@ TORTOISE_ORM = {
 # 需要新增配置时，在此追加键与默认值，再执行一次 python -m db.init_db 即可。
 SYSTEM_CONFIG_KEYS: dict[str, str] = {
     "browser_concurrency": "4",  # 浏览器并发数
+
+    # ═══ FC 自动部署向导（fc/provision_image_function.py）配置 ═══
+    # 键的字段元数据（类型/默认值/所属向导步骤）以该模块的 CONFIG_FIELDS 为准，
+    # 此处仅注册键与默认字符串（值默认取 CONFIG_FIELDS 的 default）。
+    # ── 向导第 1 步：账号与角色校验 ──
+    "platform_access_key_id": "",            # 平台 AK（AssumeRole 发起方）
+    "platform_access_key_secret": "",        # 平台 SK
+    "target_account_id": "",                 # 目标账号主账号 ID
+    "assume_role_arn": "",                   # 目标账号内、信任平台账号的角色 ARN
+    "role_session_name": "plat-provision",   # AssumeRole 会话名
+    "region": "cn-hangzhou",                 # 地域
+    "function_exec_role_arn": "",            # 函数执行角色 ARN（可选，留空走服务关联角色）
+    "auto_create_slr": "true",               # 是否自动创建 FC 服务关联角色
+    # ── 向导第 2 步：VPC 网络链路 ──
+    "vpc_cidr": "172.16.0.0/16",             # VPC 网段
+    "vswitch_cidr": "172.16.0.0/20",         # 交换机网段
+    "zone_id": "",                           # 可用区（留空自动选择）
+    "eip_bandwidth_mbps": "5",               # EIP 带宽峰值 Mbps（按流量计费上限）
+    # ── 向导第 3 步：函数/镜像/触发器 ──
+    "function_name": "",                     # 函数名（字母开头 1~64 位）
+    "image_url": "",                         # 容器镜像完整地址
+    "image_registry_username": "",           # 私有仓库用户名（公开镜像留空）
+    "image_registry_password": "",           # 私有仓库密码（公开镜像留空）
+    "container_port": "9000",                # 镜像内 HTTP Server 监听端口
+    "cpu_vcores": "1.0",                     # CPU 核数
+    "memory_size_mb": "1536",                # 内存 MB（64 倍数，与 CPU 比例 1:1~1:4）
+    "timeout_seconds": "60",                 # 函数超时（s）
+    "disk_size_mb": "512",                   # 磁盘：512 或 10240
+    "affinity_header_field_name": "sessionid",  # Header 会话亲和键名
+    "session_concurrency_per_instance": "1",    # 单实例并发 Session 数
+    "session_ttl_seconds": "600",               # Session 生命周期（s）
+    "session_idle_timeout_seconds": "30",       # Session 空闲时长（s）
+    "disable_session_id_reuse": "false",        # 禁用 SessionID 复用
+    "trigger_name": "default-http",             # HTTP 触发器名
+    "trigger_methods": '["GET", "POST"]',       # 触发器允许的 HTTP 方法（JSON 数组）
 }
 
 

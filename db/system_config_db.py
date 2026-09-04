@@ -90,6 +90,35 @@ class SystemConfigDB:
 
     @staticmethod
     @with_db
+    async def get_many(keys: Optional[list[str]] = None) -> dict[str, str]:
+        """批量读取配置：返回 {key: value}，缺记录回落 SYSTEM_CONFIG_KEYS 默认值。
+
+        Args:
+            keys: 要读取的键列表；为 None 时读取全部已注册键。
+        """
+        key_list = list(keys) if keys is not None else list(SYSTEM_CONFIG_KEYS)
+        unknown = [k for k in key_list if k not in SYSTEM_CONFIG_KEYS]
+        if unknown:
+            raise ValueError(f"未知系统配置键: {unknown}，可用键: {sorted(SYSTEM_CONFIG_KEYS)}")
+        rows = await SystemConfig.filter(config_key__in=key_list).values(
+            "config_key", "config_value"
+        )
+        stored = {row["config_key"]: row["config_value"] for row in rows}
+        return {k: stored.get(k, SYSTEM_CONFIG_KEYS.get(k, "")) for k in key_list}
+
+    @staticmethod
+    @with_db
+    async def set_many(values: dict[str, Any]) -> None:
+        """批量写入配置（原子性由逐条 upsert 保证，键须已注册）。"""
+        unknown = [k for k in values if k not in SYSTEM_CONFIG_KEYS]
+        if unknown:
+            raise ValueError(f"未知系统配置键: {unknown}，可用键: {sorted(SYSTEM_CONFIG_KEYS)}")
+        for key, value in values.items():
+            # 嵌套调用：with_db 引用计数保证不会提前关闭连接
+            await SystemConfigDB.set_value(key, value)
+
+    @staticmethod
+    @with_db
     async def set_value(key: str, value: Any) -> None:
         """设置配置项（键须在 SYSTEM_CONFIG_KEYS 中注册），值以字符串形式存储。
 
