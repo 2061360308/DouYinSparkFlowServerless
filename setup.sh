@@ -5,18 +5,23 @@
 #   1) 创建虚拟环境 .venv 并安装 Python 依赖
 #   2) 下载 CloakBrowser（GitHub 加速镜像）解压到仓库根 cloakbrowser/
 #   3) 通过 USTC Debian 镜像补齐 Chrome 运行所需系统库（Debian / Ubuntu）
+#   4) 安装 CodeBuddy Skill: alibabacloud-find-skills（阿里云 Skills 市场）
 #
 # 用法:
 #   ./setup.sh                              # 全流程
 #   ./setup.sh --skip-system-deps           # 无 root/sudo 时跳过系统组件
+#   ./setup.sh --skip-skill                 # 跳过 CodeBuddy Skill 安装
 #   ./setup.sh --venv-only                  # 仅创建虚拟环境并装依赖
 #   ./setup.sh --browser-only               # 仅下载浏览器
 #   ./setup.sh --system-deps-only           # 仅补齐系统组件
+#   ./setup.sh --skill-only                 # 仅安装 CodeBuddy Skill
 #
 # 常用环境变量:
 #   CLOAK_CHROMIUM_VERSION=146.0.7680.177.5   浏览器版本（默认同上）
 #   GH_MIRROR=https://gh.07150721.xyz         GitHub 加速前缀（置空则直连官方）
 #   VENV_DIR=.venv                            虚拟环境目录名
+#   SKILL_NAME=alibabacloud-find-skills       要安装的 Skill 名称
+#   SKILL_DIR=~/.codebuddy/skills/<name>      Skill 安装目录
 #
 set -euo pipefail
 
@@ -49,6 +54,11 @@ VENV_DIR="${VENV_DIR:-.venv}"
 VENV_PY="$ROOT/$VENV_DIR/bin/python"
 VENV_PIP="$ROOT/$VENV_DIR/bin/pip"
 
+# CodeBuddy Skill（阿里云 Skills 市场）
+SKILL_NAME="${SKILL_NAME:-alibabacloud-find-skills}"
+SKILL_URL="${SKILL_URL:-https://skills.aliyun.com/api/public/skills/${SKILL_NAME}/download}"
+SKILL_DIR="${SKILL_DIR:-$HOME/.codebuddy/skills/${SKILL_NAME}}"
+
 # Chrome/Chromium 在 Debian 系常见的运行库
 SYSTEM_DEPS=(
     ca-certificates curl fonts-liberation
@@ -65,9 +75,10 @@ SYSTEM_DEPS=(
 DO_VENV=1
 DO_BROWSER=1
 DO_SYSTEM=1
+DO_SKILL=1
 DO_MIRROR_SRC=1          # 允许把 apt 源切到 USTC 镜像
 DO_FALLBACK=1            # 镜像下载失败时回退官方地址
-FORCE=0                  # 强制重新下载浏览器
+FORCE=0                  # 强制重新下载浏览器 / 重装 Skill
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -98,7 +109,8 @@ run_as_root() {
 }
 
 usage() {
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    # 打印文件头注释（# 行），遇到首个非注释行即停止
+    awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
     exit 0
 }
 
@@ -291,6 +303,61 @@ setup_system_deps() {
 }
 
 # ---------------------------------------------------------------------------
+# 4) 安装 CodeBuddy Skill（阿里云 Skills 市场）
+# ---------------------------------------------------------------------------
+unzip_to_dir() { # $1=zip  $2=目标目录
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -q -o "$1" -d "$2"
+    else
+        python3 -m zipfile -e "$1" "$2"
+    fi
+}
+
+install_skill() {
+    if [ -f "$SKILL_DIR/SKILL.md" ] && [ "$FORCE" != 1 ]; then
+        log "Skill 已安装: $SKILL_NAME（目录 $SKILL_DIR，--force 可强制重装）"
+        return 0
+    fi
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 \
+        || die "未找到 curl / wget，无法下载 Skill"
+
+    local tmp_zip tmp_root src inner
+    tmp_zip="$(mktemp)"
+    tmp_root="$(mktemp -d)"
+
+    log "下载 Skill ($SKILL_NAME): $SKILL_URL"
+    if ! fetch_url "$SKILL_URL" "$tmp_zip"; then
+        rm -rf "$tmp_zip" "$tmp_root"
+        die "下载 Skill 失败: $SKILL_URL"
+    fi
+
+    if ! unzip_to_dir "$tmp_zip" "$tmp_root"; then
+        rm -rf "$tmp_zip" "$tmp_root"
+        die "解压失败，下载内容可能不是有效的 ZIP: $SKILL_URL"
+    fi
+
+    # 兼容 SKILL.md 位于压缩包根目录或嵌套子目录两种情况
+    src="$tmp_root"
+    if [ ! -f "$src/SKILL.md" ]; then
+        inner="$(find "$tmp_root" -name SKILL.md -print -quit 2>/dev/null || true)"
+        if [ -n "$inner" ]; then
+            src="$(dirname "$inner")"
+        else
+            rm -rf "$tmp_zip" "$tmp_root"
+            die "压缩包内未找到 SKILL.md，可能不是有效的 Skill 包"
+        fi
+    fi
+
+    log "安装到 $SKILL_DIR ..."
+    mkdir -p "$(dirname "$SKILL_DIR")" "$SKILL_DIR"
+    rm -rf "$SKILL_DIR"
+    cp -a "$src/." "$SKILL_DIR/"
+    chmod -R u+rwX "$SKILL_DIR"
+    rm -rf "$tmp_zip" "$tmp_root"
+    ok "Skill 已安装: $SKILL_NAME → $SKILL_DIR（需重启对话后生效）"
+}
+
+# ---------------------------------------------------------------------------
 # 验证
 # ---------------------------------------------------------------------------
 verify_browser() {
@@ -326,6 +393,9 @@ main() {
     if [ "$DO_SYSTEM" = 1 ]; then
         setup_system_deps
     fi
+    if [ "$DO_SKILL" = 1 ]; then
+        install_skill
+    fi
     verify_browser
     printf '\033[1;32m\n环境初始化完成 ✔\033[0m\n'
 }
@@ -335,10 +405,12 @@ main() {
 # ---------------------------------------------------------------------------
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --venv-only)        DO_BROWSER=0; DO_SYSTEM=0 ;;
-        --browser-only)     DO_VENV=0; DO_SYSTEM=0 ;;
-        --system-deps-only) DO_VENV=0; DO_BROWSER=0 ;;
+        --venv-only)        DO_BROWSER=0; DO_SYSTEM=0; DO_SKILL=0 ;;
+        --browser-only)     DO_VENV=0; DO_SYSTEM=0; DO_SKILL=0 ;;
+        --system-deps-only) DO_VENV=0; DO_BROWSER=0; DO_SKILL=0 ;;
+        --skill-only)       DO_VENV=0; DO_BROWSER=0; DO_SYSTEM=0 ;;
         --skip-system-deps) DO_SYSTEM=0 ;;
+        --skip-skill)       DO_SKILL=0 ;;
         --skip-mirror-src)  DO_MIRROR_SRC=0 ;;
         --no-fallback)      DO_FALLBACK=0 ;;
         --force)            FORCE=1 ;;
