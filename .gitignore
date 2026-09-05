@@ -7,6 +7,12 @@ venv/
 # 本地数据库（运行产物，不入库）
 db.sqlite3
 *.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+db.sqlite3-*
+
+# 后端本地密钥（start-backend.sh 生成，切勿入库）
+.secrets/
 
 # 系统 / IDE
 .Trash-0/

@@ -1,31 +1,57 @@
 /**
- * 应用路由。
- *
- * 顶层页面走路由；安装向导内部 5 个步骤仍是组件内部状态，不作为路由。
- * 本期仅有 /install 一个实义路由；守卫按"是否已安装"预置了受保护路由分支
- * （meta.requiresInstall），待后端与安装后落地页（如 /dashboard）就绪后启用。
+ * 应用路由：登录页 + 控制台（受保护，ConsoleLayout 布局）+ 安装向导。
+ * 安装向导内部步骤仍是组件内部状态，不作为路由。
  */
 
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
-import { isInstalled } from '../composables/useInstallState'
+import { setUnauthorizedHandler } from '../api/console.http'
+import { useAuth } from '../composables/useAuth'
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/login',
+    name: 'login',
+    component: () => import('../views/LoginView.vue'),
+    meta: { public: true },
+  },
+  {
     path: '/install',
     name: 'install',
-    // 懒加载：把 naive-ui + 向导拆为独立 chunk，减小首屏 JS。
     component: () => import('../install/InstallWizard.vue'),
+    meta: { public: true },
   },
   {
     path: '/',
-    redirect: '/install',
+    component: () => import('../layouts/ConsoleLayout.vue'),
+    meta: { requiresAuth: true },
+    children: [
+      { path: '', name: 'dashboard', component: () => import('../views/DashboardView.vue') },
+      {
+        path: 'change-password',
+        name: 'change-password',
+        component: () => import('../views/ChangePasswordView.vue'),
+        meta: { allowChange: true },
+      },
+      { path: 'accounts', name: 'accounts', component: () => import('../views/AccountsView.vue') },
+      { path: 'scan', name: 'scan', component: () => import('../views/ScanView.vue') },
+      { path: 'tasks', name: 'tasks', component: () => import('../views/TasksView.vue') },
+      { path: 'runs', name: 'runs', component: () => import('../views/RunsView.vue') },
+      {
+        path: 'admin/users',
+        name: 'admin-users',
+        component: () => import('../views/admin/AdminUsersView.vue'),
+        meta: { requiresAdmin: true },
+      },
+      {
+        path: 'admin/users/:id/quota',
+        name: 'admin-user-quota',
+        component: () => import('../views/admin/AdminUserQuotaView.vue'),
+        meta: { requiresAdmin: true },
+      },
+    ],
   },
-  {
-    // 兜底：未知路径回到安装向导。
-    path: '/:pathMatch(.*)*',
-    redirect: '/install',
-  },
+  { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
 const router = createRouter({
@@ -33,11 +59,38 @@ const router = createRouter({
   routes,
 })
 
-// 安装门控（stub）：受保护路由在未安装时回退到 /install。
-// 目前无受保护路由；后端就绪后，将 isInstalled() 换成真实接口判定即可。
-router.beforeEach((to) => {
-  if (to.meta.requiresInstall && !isInstalled()) {
-    return { name: 'install' }
+const auth = useAuth()
+
+// 收到 401：清空登录态并跳登录页
+setUnauthorizedHandler(() => {
+  auth.clear()
+  if (router.currentRoute.value.name !== 'login') {
+    router.replace({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+  }
+})
+
+router.beforeEach(async (to) => {
+  if (!auth.state.ready) {
+    await auth.refresh()
+  }
+  const loggedIn = auth.state.user !== null
+
+  // 已登录再访问登录页 → 回首页
+  if (to.name === 'login' && loggedIn) {
+    return { name: 'dashboard' }
+  }
+  if (to.meta.public) {
+    return true
+  }
+  if (to.meta.requiresAuth && !loggedIn) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  // 强制改密：未改密时只能停留在改密页
+  if (loggedIn && auth.state.mustChangePassword && !to.meta.allowChange) {
+    return { name: 'change-password' }
+  }
+  if (to.meta.requiresAdmin && !auth.state.isAdmin) {
+    return { name: 'dashboard' }
   }
   return true
 })
