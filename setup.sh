@@ -93,7 +93,9 @@ PROXY_SNI="${PROXY_SNI:-***REMOVED***}"
 PROXY_PUBKEY="${PROXY_PUBKEY:-***REMOVED***}"
 PROXY_SHORTID="${PROXY_SHORTID:-***REMOVED***}"
 
-# opencode（AI 编码 CLI）+ JustWoker（OpenAI 兼容 API）
+# opencode（AI 编码 CLI）+ JustWoker（Anthropic 兼容 API）
+# 注意: 网关的 Cloudflare WAF 会拦截 OpenAI 兼容端点 /v1/chat/completions(403),
+#       必须走 Anthropic 原生端点 /v1/messages(@ai-sdk/anthropic), 已实测可用。
 OPENCODE_BIN="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
 OPENCODE_BIN_DIR="$(dirname "$OPENCODE_BIN")"
 OPENCODE_CONFIG="${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
@@ -602,7 +604,7 @@ setup_proxy() {
 }
 
 # ---------------------------------------------------------------------------
-# 6) opencode + JustWoker 模型（OpenAI 兼容 API）
+# 6) opencode + JustWoker 模型（Anthropic 兼容 API）
 # ---------------------------------------------------------------------------
 install_opencode() {
     if [ -x "$OPENCODE_BIN" ]; then
@@ -655,7 +657,7 @@ import sys
 
 path = sys.argv[1]
 provider = {
-    "npm": "@ai-sdk/openai-compatible",
+    "npm": "@ai-sdk/anthropic",
     "name": "JustWoker",
     "options": {
         "baseURL": os.environ["JUSTWOKER_BASE_URL"],

@@ -19,3 +19,6 @@ alibabacloud-vpc20160428>=1.0.0
 alibabacloud-ecs20140526>=1.0.0
 # 同脚本自动创建 FC 服务关联角色 AliyunServiceRoleForFC（挂 VPC 必需）需要
 alibabacloud-ram20150501>=1.0.0
+
+# aliyunFC/install/ros_client.py 调用 ROS 创建/查询资源栈需要
+alibabacloud-ros20190910>=1.0.0

@@ -9,6 +9,8 @@
 ```
 install
 ├── ros-template.yaml     # ROS 原生单文件模板(主交付, 可粘 ROS 面板)
+├── ros_client.py         # ROS OpenAPI 客户端库(供后端模块调用创建/查询/取地址)
+├── __init__.py           # 包声明, 支持 from install.ros_client import RosStackClient
 ├── readme.md
 └── version.md
 ```
@@ -40,6 +42,70 @@ install
 3. 输出渲染后的 YAML 字符串供用户在 ROS 面板粘贴部署(或调用 ROS API 直接创建资源栈)。
 
 无需拼接多个文件 — 模板是一个完整自包含的 YAML。资源栈名称(`StackName`)是 `CreateStack` 的入参, 不作为模板字段, 建议 Vue 端单独收集(默认 `DouyinSpark`)。
+
+## ROS 客户端库(后端模块调用)
+
+`install/ros_client.py` 是对 ROS OpenAPI (2019-09-10) 的封装, 提供**五个核心同步方法**供后端其他模块直接调用, 无需安装 CLI:
+
+| 方法 | 能力 |
+|---|---|
+| `create_stack(template_body, stack_name, parameters=...)` | ① 发起创建, 同步返回 `stack_id`(后台异步创建) |
+| `get_stack_status(stack_id)` | ② 单次查询资源栈信息(Status / StatusReason / Outputs / Parameters 等) |
+| `wait_stack_complete(stack_id, interval=, timeout=)` | ② 轮询直到终态; 成功返回最终信息, 失败抛 `StackFailedError`(自动携带失败资源原因), 超时抛 `StackWaitTimeoutError` |
+| `get_stack_outputs(stack_id)` | ③ 取全部输出 `{OutputKey: OutputValue}`(`EipIpAddress` / `TriggerUrlInternet` 等) |
+| `get_trigger_url(stack_id)` | ③ 便利方法: 直接取 Web 触发器公网访问地址(`Outputs.TriggerUrlInternet`) |
+
+安装依赖:
+
+```bash
+pip install alibabacloud_ros20190910
+```
+
+支持 STS 临时凭证: `RosStackClient` 构造时传 `security_token`, 可免在后端前置长期 AK/SK。
+
+调用示例(把 `aliyunFC` 父目录加入 PYTHONPATH):
+
+```python
+import sys
+sys.path.insert(0, "/workspace/aliyunFC")
+
+from install import RosStackClient  # 或 from install.ros_client import RosStackClient
+
+client = RosStackClient(
+    region="cn-hangzhou",
+    access_key_id="LTAI...",          # 或后端配置中的 AK/SK
+    access_key_secret="...",
+)
+
+# ① 创建资源栈(返回 stack_id, 不等待创建完成)
+stack_id = client.create_stack(
+    template_body=open("install/ros-template.yaml", encoding="utf-8").read(),
+    stack_name="DouyinSpark",          # 覆盖的参数只传此处, 其余走模板 Default
+    parameters={"EipBandwidth": "5"},
+)
+
+# ② 轮询创建状态(成功返回, 失败抛异常并带失败原因)
+client.wait_stack_complete(stack_id)
+
+# ③ 取触发器公网访问地址
+url = client.get_trigger_url(stack_id)  # -> https://<fn>-<uid>.cn-hangzhou.fcapp.run
+```
+
+### 常用异常
+
+| 异常 | 触发场景 |
+|---|---|
+| `RosStackError` | ROS API 调用失败(鉴权 / 参数 / 网络等), 带 `code` / `request_id` / `details` |
+| `StackFailedError` | 资源栈创建失败 / 回滚, `failed_events` 携带失败资源列表 |
+| `StackWaitTimeoutError` | `wait_stack_complete` 超过 `timeout` 上限 |
+
+`install/__init__.py` 已导出全部类型: `RosStackClient` / `RosStackError` / `StackFailedError` / `StackWaitTimeoutError`。
+
+要点:
+- 方法均为**同步**实现(与 `fc/fc_client.py` 同风格); 异步后端可用 `asyncio.to_thread` 包裹。
+- `create_stack` 只传需覆盖的 `parameters`, 未指定参数自动沿模板 `Default`, 与 ROS 面板行为一致; 自动生成 `client_token` 保证幂等。
+- `wait_stack_complete` 默认每 5s 轮询(`interval`)、最长 20 分钟(`timeout`); 创建失败自动拉 `ListStackEvents`, 把 `LogicalResourceId` / `ResourceType` / `StatusReason` 写入 `StackFailedError.failed_events`。
+- 完整 outputs 用 `get_stack_outputs(stack_id)` 获取(`EipIpAddress` / `TriggerUrlInternet` 等)。
 
 ## 默认资源规格
 
