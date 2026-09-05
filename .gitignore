@@ -15,3 +15,12 @@ db.sqlite3
 
 # 浏览器运行产物（Chromium 二进制等，不入库）
 /cloakbrowser/
+
+# Terraform 本地文件（状态/插件/缓存，不入库）
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform/
+crash.log
+override.tf
+override.tf.json
