@@ -100,3 +100,21 @@ async def admin_csrf(request: Request, ctx: AuthContext = Depends(require_admin)
     """需要管理员 + CSRF 的写操作依赖。"""
     _check_csrf(request, ctx)
     return ctx
+
+
+async def require_service(request: Request) -> None:
+    """机器身份守卫：校验服务令牌（供任务函数访问 /api/internal/*）。
+
+    令牌来自 Settings.service_token（环境变量 SPARK_SERVICE_TOKEN）。未配置则一律拒绝。
+    请求头：``Authorization: Bearer <token>`` 或 ``X-Service-Token: <token>``。
+    """
+    expected = get_settings().service_token
+    if not expected:
+        raise HTTPException(503, "internal API disabled (SPARK_SERVICE_TOKEN unset)")
+    supplied = request.headers.get("x-service-token", "")
+    if not supplied:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(401, "invalid service token")

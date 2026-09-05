@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -134,35 +135,85 @@ def unregister_windows(task_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 阿里云 EventBridge 定时调度 → FC（免费链路，需凭证；留待云端联调）
+# 阿里云 EventBridge 定时事件源 → 总线 → 规则(acs.api.destination) → FC 触发器
 # ---------------------------------------------------------------------------
+# ROS 只建"骨架"(总线+规则+ApiDestination+Connection+函数+触发器)；这里为每个续火
+# 任务动态增删一个"定时事件源"(name=task_id, cron, data={task_id})，事件进总线后由
+# 那条静态规则统一投递到任务执行器。
+#
+# 凭证/地域/总线经环境变量(服务端进程注入)：
+#   ALIBABA_CLOUD_ACCESS_KEY_ID / ALIBABA_CLOUD_ACCESS_KEY_SECRET (或 SPARK_ALIYUN_AK/SK)
+#   SPARK_ALIYUN_REGION(默认 cn-hangzhou) / SPARK_EVENTBRIDGE_BUS(默认 default) /
+#   SPARK_EVENTBRIDGE_TZ(默认 GMT+08:00)
+# 依赖: alibabacloud-eventbridge20200401
+
+
+def _eb_bus_name() -> str:
+    return os.getenv("SPARK_EVENTBRIDGE_BUS", "default")
+
+
+def _eb_client():
+    """构造 EventBridge OpenAPI 客户端（凭证走环境变量）。"""
+    from alibabacloud_eventbridge20200401.client import Client
+    from alibabacloud_tea_openapi.models import Config
+
+    region = os.getenv("SPARK_ALIYUN_REGION", "cn-hangzhou")
+    ak = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID") or os.getenv("SPARK_ALIYUN_AK", "")
+    sk = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET") or os.getenv("SPARK_ALIYUN_SK", "")
+    if not ak or not sk:
+        raise RuntimeError(
+            "EventBridge 需要凭证：请设 ALIBABA_CLOUD_ACCESS_KEY_ID/ACCESS_KEY_SECRET"
+        )
+    return Client(Config(
+        access_key_id=ak, access_key_secret=sk,
+        endpoint=f"eventbridge.{region}.aliyuncs.com",
+    ))
+
+
 def build_fc_schedule(task: dict) -> dict:
-    """构造 EventBridge 定时调度所需参数（纯函数）。"""
+    """构造 EventBridge 定时事件源参数（纯函数，便于单测）。"""
     return {
-        "rule_name": task["task_id"],
-        "event_bus": "default",                       # 云服务专用总线，发布/推送 FC 免费
-        "schedule": cron_utils.to_six_field(task["cron_expr"]),  # 6 段 cron
-        "time_zone": "Asia/Shanghai",
-        "payload": {"task_id": task["task_id"]},      # 事件载荷仅携带 task_id
+        "event_source_name": task["task_id"],
+        "event_bus_name": _eb_bus_name(),
+        "schedule": cron_utils.to_six_field(task["cron_expr"]),   # 阿里云 6 段 cron
+        "time_zone": os.getenv("SPARK_EVENTBRIDGE_TZ", "GMT+08:00"),
+        "user_data": json.dumps({"task_id": task["task_id"]}, ensure_ascii=False),
     }
 
 
 def register_fc(task: dict, *, client=None) -> None:
-    """在默认总线创建定时调度规则、目标为 FC 函数（载荷携带 task_id）。
+    """为任务创建/更新定时事件源(name=task_id)；幂等(先删后建)。"""
+    from alibabacloud_eventbridge20200401 import models as eb
 
-    需真实阿里云凭证，留待云端联调：请构造
-    ``alibabacloud_eventbridge20200401`` 客户端并传入 ``client``，按
-    ``build_fc_schedule(task)`` 的参数创建规则与 FC 目标。
-    """
-    schedule = build_fc_schedule(task)
-    raise NotImplementedError(
-        "EventBridge 定时调度需云端联调实现；"
-        f"参数已就绪：{schedule}"
+    params = build_fc_schedule(task)
+    client = client or _eb_client()
+    try:
+        unregister_fc(task["task_id"], client=client)
+    except Exception:  # noqa: BLE001  不存在则忽略
+        pass
+    scheduled = eb.CreateEventSourceRequestSourceScheduledEventParameters(
+        schedule=params["schedule"],
+        time_zone=params["time_zone"],
+        user_data=params["user_data"],
     )
+    request = eb.CreateEventSourceRequest(
+        event_source_name=params["event_source_name"],
+        event_bus_name=params["event_bus_name"],
+        source_scheduled_event_parameters=scheduled,
+    )
+    client.create_event_source(request)
 
 
 def unregister_fc(task_id: str, *, client=None) -> None:
-    raise NotImplementedError("EventBridge 规则删除需云端联调实现（DeleteRule rule_name=task_id）")
+    """删除任务对应的定时事件源(name=task_id)。"""
+    from alibabacloud_eventbridge20200401 import models as eb
+
+    client = client or _eb_client()
+    request = eb.DeleteEventSourceRequest(
+        event_source_name=task_id,
+        event_bus_name=_eb_bus_name(),
+    )
+    client.delete_event_source(request)
 
 
 # ---------------------------------------------------------------------------

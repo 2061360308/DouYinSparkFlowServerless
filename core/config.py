@@ -43,6 +43,7 @@ class Settings:
     public_base_url: str = ""
     resend_api_key: str = field(default="", repr=False)
     resend_from: str = ""
+    service_token: str = field(default="", repr=False)
     dev_insecure: bool = False
 
     @classmethod
@@ -68,6 +69,11 @@ class Settings:
         secure_cookies = environ.get("SPARK_SECURE_COOKIES", "true").strip().lower() not in {
             "0", "false", "no", "off"
         }
+        # 服务令牌：任务函数(FC/本地)访问 /api/internal/* 的机器身份。
+        # dev_insecure 下若未提供则随机生成(仅本地冒烟；跨进程需显式设置同一值)。
+        service_token = environ.get("SPARK_SERVICE_TOKEN", "").strip()
+        if not service_token and dev_insecure:
+            service_token = os.urandom(24).hex()
         return cls(
             cookie_key=cookie_key,
             session_key=session_key,
@@ -78,6 +84,7 @@ class Settings:
             public_base_url=public_base_url,
             resend_api_key=resend_api_key,
             resend_from=resend_from,
+            service_token=service_token,
             dev_insecure=dev_insecure,
         )
 

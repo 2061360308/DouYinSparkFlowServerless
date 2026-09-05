@@ -12,6 +12,9 @@ cryptography>=45.0.0
 # 邮件（Resend HTTP，请求内联发送）
 httpx>=0.28.0
 
+# 计划任务 fc 分支：EventBridge 定时事件源(CreateEventSource/DeleteEventSource)
+alibabacloud-eventbridge20200401>=1.0.0
+
 # 可选数据库驱动：
 # - SQLite（本地调试）：tortoise-orm 自带 aiosqlite 依赖，无需额外安装
 # - PostgreSQL（生产环境 / Vercel）：Tortoise 通过 asyncpg 连接

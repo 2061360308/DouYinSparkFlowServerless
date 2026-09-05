@@ -139,6 +139,12 @@ url = client.get_trigger_url(stack_id)  # -> https://<fn>-<uid>.cn-hangzhou.fcap
 | DisableSessionIdReuse | false | Session 过期后拒绝复用 |
 | HealthCheckUrl / 健康检查 | / | 自定义容器健康检查(应用探测端点为 `/`, 恒 200) |
 | EipBandwidth / EipInternetChargeType | 5 / PayByTraffic | EIP 带宽(Mbps) / 计费方式 |
+| EventBusName | DouyinSpark-bus | EventBridge 事件总线名称(计划任务定时调度 → FC 用) |
+| TaskImageUrl | ACR taskrunner 镜像 | 续火任务执行器容器镜像(aliyunFC/taskrunner) |
+| TaskFunctionName / TaskCpu / TaskMemorySize | DYSparkTaskRunner / 0.5 / 512 | 任务执行器函数名/规格(小,浏览器在远端) |
+| ApiBaseUrl / ServiceToken | 空 | 任务函数访问的 FastAPI 基址 / 机器身份服务令牌(部署填) |
+| BearerToken | 空 | Bearer 令牌：FC 触发器(authType=function tokens)校验 + EventBridge Connection 注入 Authorization 头, 两者一致(务必设随机值) |
+| RuleName / ApiDestinationName / ConnectionName | DouyinSpark-* | 定时调度规则 / API 端点 / 连接配置 名称 |
 
 ## 输出
 
@@ -148,6 +154,11 @@ url = client.get_trigger_url(stack_id)  # -> https://<fn>-<uid>.cn-hangzhou.fcap
 | TriggerUrlInternet / TriggerUrlIntranet | Web 触发器公网 / 内网访问地址 |
 | NatGatewayId / VpcId / VSwitchId / SecurityGroupId | 相关资源 ID |
 | FunctionName | 函数名称 |
+| EventBusName | EventBridge 事件总线名称(计划任务定时调度用) |
+| TaskFunctionName | 续火任务执行器函数名称 |
+| TaskTriggerUrlInternet | 任务执行器 HTTP 触发器公网地址(API 端点指向它) |
+| ScheduleRuleName / ScheduleRuleARN | 定时调度规则 名称 / ARN |
+| ApiDestinationName / ConnectionName | EventBridge API 端点 / 连接配置 名称 |
 
 > 会话亲和说明: 客户端请求需携带名为 `sessionid` 的 HTTP 头, FC 基于该头哈希路由到同一实例。
 > 镜像在 FC 同地域 ACR 个人版仓库, VPC 内自动走 EIP 固定出口出网。

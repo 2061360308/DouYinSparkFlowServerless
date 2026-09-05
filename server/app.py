@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from tortoise import connections
 
 from server.deps import get_settings
-from server.routers import accounts, admin, auth, dashboard, runs, tasks
+from server.routers import accounts, admin, auth, dashboard, internal, runs, tasks
 from core.services import Conflict, NotFound, ValidationError
 from core.db.connection import close_persistent, open_persistent
 
@@ -55,7 +55,7 @@ def create_app() -> FastAPI:
         await conn.execute_query("SELECT 1")
         return {"status": "ready"}
 
-    for module in (auth, accounts, tasks, runs, dashboard, admin):
+    for module in (auth, accounts, tasks, runs, dashboard, admin, internal):
         app.include_router(module.router)
 
     return app

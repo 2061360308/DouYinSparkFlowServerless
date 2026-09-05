@@ -3,7 +3,7 @@ Description:
   zh-cn: >-
     cloakbrowser-serverless 全量部署模板: 新建 VPC/交换机/安全组 + NAT 网关/
     EIP(固定公网出口)/SNAT + RAM 服务角色 + FC3 自定义容器函数(开启 HEADER_FIELD
-    会话亲和) + Web 触发器。镜像与 EIP 出口均在同一地域, 默认 cn-hangzhou。
+    会话亲和) + Web 触发器 + EventBridge 事件总线(计划任务定时调度)。镜像与 EIP 出口均在同一地域, 默认 cn-hangzhou。
   en: >
     Full cloakbrowser-serverless stack: VPC/VSwitch/SecurityGroup + NAT gateway /
     EIP(fixed egress)/SNAT + RAM service role + FC3 custom-container function
@@ -221,6 +221,122 @@ Parameters:
     Label:
       zh-cn: 健康检查超时 (秒)
       en: Check timeout (s)
+
+  # ===========================================================================
+  # 事件总线 (EventBridge, 供计划任务定时调度 → FC 使用)
+  # ===========================================================================
+  EventBusName:
+    Type: String
+    Default: DouyinSpark-bus
+    Label:
+      zh-cn: 事件总线名称
+      en: Event bus name
+    Description:
+      zh-cn: EventBridge 自定义事件总线名称, 计划任务定时调度规则挂载于此 (2-127 字符, 字母开头)。
+      en: Custom EventBridge bus name for scheduled task rules (2-127 chars).
+
+  # ===========================================================================
+  # 续火任务执行器 (FC3 自定义容器) + 定时调度规则
+  # ===========================================================================
+  TaskImageUrl:
+    Type: String
+    Default: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/douyin_spark_runner:latest
+    Label:
+      zh-cn: 任务执行器镜像地址
+      en: Task runner image URL
+    Description:
+      zh-cn: 续火任务执行器容器镜像 (aliyunFC/taskrunner 构建), 需与部署地域一致。
+      en: Task runner container image (built from aliyunFC/taskrunner).
+  TaskFunctionName:
+    Type: String
+    Default: DYSparkTaskRunner
+    Label:
+      zh-cn: 任务执行器函数名
+      en: Task runner function name
+  TaskTriggerName:
+    Type: String
+    Default: taskTrigger
+    Label:
+      zh-cn: 任务执行器触发器名
+      en: Task runner trigger name
+  TaskCpu:
+    Type: Number
+    Default: 0.5
+    MinValue: 0.05
+    MaxValue: 16
+    Label:
+      zh-cn: 任务执行器 CPU (vCPU)
+      en: Task runner CPU (vCPU)
+  TaskMemorySize:
+    Type: Number
+    Default: 512
+    MinValue: 128
+    Label:
+      zh-cn: 任务执行器内存 (MB)
+      en: Task runner memory (MB)
+  TaskFunctionTimeout:
+    Type: Number
+    Default: 300
+    MinValue: 1
+    MaxValue: 86400
+    Label:
+      zh-cn: 任务执行器超时 (秒)
+      en: Task runner timeout (s)
+  TaskContainerPort:
+    Type: Number
+    Default: 9000
+    MinValue: 1
+    MaxValue: 65535
+    Label:
+      zh-cn: 任务执行器容器端口
+      en: Task runner container port
+  ApiBaseUrl:
+    Type: String
+    Default: ""
+    Label:
+      zh-cn: FastAPI 基址
+      en: FastAPI base URL
+    Description:
+      zh-cn: 任务函数访问的控制台后端基址, 如 https://<app>.vercel.app (部署时填写)。
+      en: Console backend base URL the task function calls (fill at deploy).
+  ServiceToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Label:
+      zh-cn: 服务令牌
+      en: Service token
+    Description:
+      zh-cn: 任务函数访问 /api/internal/* 的机器身份令牌, 需与后端 SPARK_SERVICE_TOKEN 一致。
+      en: Machine token for /api/internal/*; must match backend SPARK_SERVICE_TOKEN.
+  BearerToken:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Label:
+      zh-cn: Bearer 令牌
+      en: Bearer token
+    Description:
+      zh-cn: EventBridge 经 Connection 以 Authorization Bearer 头调用任务触发器时携带的令牌, 任务容器据此校验 (务必设一个随机值)。
+      en: Bearer token EventBridge sends via Connection; the task container verifies it.
+  ApiDestinationName:
+    Type: String
+    Default: DouyinSpark-fc-dest
+    Label:
+      zh-cn: API 端点名称
+      en: API destination name
+  ConnectionName:
+    Type: String
+    Default: DouyinSpark-fc-conn
+    Label:
+      zh-cn: 连接配置名称
+      en: Connection name
+  RuleName:
+    Type: String
+    Default: DouyinSpark-schedule
+    Label:
+      zh-cn: 定时调度规则名
+      en: Schedule rule name
 
 Resources:
   # ===========================================================================
@@ -466,6 +582,162 @@ Resources:
           - DELETE
           - HEAD
 
+  # ===========================================================================
+  # 事件总线 (EventBridge): 计划任务(target_env=fc)定时调度规则挂载于此总线, 目标为本函数
+  # ===========================================================================
+  EventBus:
+    Type: ALIYUN::EventBridge::EventBus
+    Properties:
+      EventBusName:
+        Ref: EventBusName
+      Description: cloakbrowser scheduled-task event bus
+
+  # ===========================================================================
+  # 续火任务执行器函数 (FC3 自定义容器) + HTTP 触发器
+  # ===========================================================================
+  TaskFunction:
+    Type: ALIYUN::FC3::Function
+    DependsOn:
+      - LogPolicy
+    Properties:
+      FunctionName:
+        Ref: TaskFunctionName
+      Description: 续火计划任务执行器(connect_over_cdp 驱动远程浏览器, 经内部 API 取数)
+      Runtime: custom-container
+      Handler: index.handler
+      Cpu:
+        Ref: TaskCpu
+      MemorySize:
+        Ref: TaskMemorySize
+      DiskSize: 512
+      Timeout:
+        Ref: TaskFunctionTimeout
+      InstanceConcurrency: 1
+      Role:
+        Fn::GetAtt:
+          - Role
+          - Arn
+      CustomContainerConfig:
+        Image:
+          Ref: TaskImageUrl
+        Port:
+          Ref: TaskContainerPort
+        HealthCheckConfig:
+          HttpGetUrl: /
+          InitialDelaySeconds: 5
+          PeriodSeconds: 5
+          TimeoutSeconds: 3
+          SuccessThreshold: 1
+          FailureThreshold: 3
+      EnvironmentVariables:
+        SPARK_API_BASE_URL:
+          Ref: ApiBaseUrl
+        SPARK_SERVICE_TOKEN:
+          Ref: ServiceToken
+      LogConfig:
+        LogBeginRule: None
+      Tags:
+        - Key: Service
+          Value:
+            Ref: NamePrefix
+
+  TaskTrigger:
+    Type: ALIYUN::FC3::Trigger
+    DependsOn:
+      - TaskFunction
+    Properties:
+      FunctionName:
+        Ref: TaskFunctionName
+      TriggerName:
+        Ref: TaskTriggerName
+      TriggerType: http
+      Qualifier: LATEST
+      Description: 续火任务执行器 HTTP 触发器(Bearer 鉴权, EventBridge 经 Connection 调用)
+      TriggerConfig:
+        authType: function
+        authConfig:
+          Fn::Join:
+            - ''
+            - - '{"tokens":[{"enable":true,"tokenData":"'
+              - Ref: BearerToken
+              - '","tokenName":"eb-bearer-token"}]}'
+        methods:
+          - POST
+
+  # ===========================================================================
+  # 事件投递: Connection(Bearer 鉴权) + ApiDestination(→触发器 URL) + Rule(acs.api.destination)
+  # ===========================================================================
+  EventBridgeConnection:
+    Type: ALIYUN::EventBridge::Connection
+    Properties:
+      ConnectionName:
+        Ref: ConnectionName
+      Description: 调用续火任务执行器 HTTP 触发器(Bearer 鉴权)
+      AuthParameters:
+        AuthorizationType: API_KEY_AUTH
+        ApiKeyAuthParameters:
+          ApiKeyName: Authorization
+          ApiKeyValue:
+            Fn::Join:
+              - ''
+              - - 'Bearer '
+                - Ref: BearerToken
+      NetworkParameters:
+        NetworkType: PublicNetwork
+
+  EventBridgeApiDestination:
+    Type: ALIYUN::EventBridge::ApiDestination
+    DependsOn:
+      - EventBridgeConnection
+      - TaskTrigger
+    Properties:
+      ApiDestinationName:
+        Ref: ApiDestinationName
+      ConnectionName:
+        Fn::GetAtt:
+          - EventBridgeConnection
+          - ConnectionName
+      Description: API 端点 - 指向续火任务执行器 HTTP 触发器
+      HttpApiParameters:
+        Endpoint:
+          Fn::GetAtt:
+            - TaskTrigger
+            - UrlInternet
+        Method: POST
+
+  ScheduleRule:
+    Type: ALIYUN::EventBridge::Rule
+    DependsOn:
+      - EventBus
+      - EventBridgeApiDestination
+    Properties:
+      EventBusName:
+        Ref: EventBusName
+      RuleName:
+        Ref: RuleName
+      Status: ENABLE
+      Description: 定时事件源(task_id) → API 端点调用续火任务执行器触发器
+      FilterPattern: {}
+      Targets:
+        - Id: taskrunner-api-destination
+          Type: acs.api.destination
+          Endpoint:
+            Fn::Sub: acs:api-destination:${ALIYUN::Region}:${ALIYUN::AccountId}:name/${ApiDestinationName}
+          PushRetryStrategy: BACKOFF_RETRY
+          ErrorsTolerance: NONE
+          ParamList:
+            - ResourceKey: Name
+              Form: CONSTANT
+              Value:
+                Ref: ApiDestinationName
+            - ResourceKey: HeaderParameters
+              Form: TEMPLATE
+              Value: '{"headerKey1":"Content-Type","headerValue1":"application/json"}'
+              Template: '{"${headerKey1}":"${headerValue1}"}'
+            - ResourceKey: BodyParameters
+              Form: ORIGINAL
+              Value: ''
+
 Outputs:
   EipId:
     Description: 固定公网出口 IP 的 EIP 实例 ID
@@ -511,3 +783,41 @@ Outputs:
       Fn::GetAtt:
         - Function
         - FunctionName
+  EventBusName:
+    Description: EventBridge 事件总线名称 (计划任务定时调度用)
+    Value:
+      Ref: EventBus
+  TaskFunctionName:
+    Description: 续火任务执行器函数名称
+    Value:
+      Fn::GetAtt:
+        - TaskFunction
+        - FunctionName
+  TaskTriggerUrlInternet:
+    Description: 续火任务执行器 HTTP 触发器公网地址 (EventBridge 规则投递目标)
+    Value:
+      Fn::GetAtt:
+        - TaskTrigger
+        - UrlInternet
+  ScheduleRuleName:
+    Description: 定时调度规则名称
+    Value:
+      Ref: RuleName
+  ScheduleRuleARN:
+    Description: 定时调度规则 ARN
+    Value:
+      Fn::GetAtt:
+        - ScheduleRule
+        - RuleARN
+  ApiDestinationName:
+    Description: EventBridge API 端点名称
+    Value:
+      Fn::GetAtt:
+        - EventBridgeApiDestination
+        - ApiDestinationName
+  ConnectionName:
+    Description: EventBridge 连接配置名称
+    Value:
+      Fn::GetAtt:
+        - EventBridgeConnection
+        - ConnectionName

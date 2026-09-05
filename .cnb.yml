@@ -56,6 +56,38 @@ x-acr-build: &acr-build
           fi
         done
 
+# 续火任务执行器(taskrunner)镜像: 上下文=仓库根(需 COPY core/), 复用同一 ACR 登录逻辑
+x-taskrunner-build: &taskrunner-build
+  services:
+    - docker
+  imports:
+    - https://cnb.cool/oilu/key/-/blob/main/secrets.yml
+  env:
+    ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
+    ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/douyin_spark_runner
+  stages:
+    - name: 登录阿里云 ACR
+      script: echo "$ACR_PASSWORD" | docker login --username="$ACR_USERNAME" --password-stdin "$ACR_REGISTRY"
+    - name: 构建并推送 taskrunner 镜像(上下文=仓库根)
+      script: |
+        IMAGE_VERSION="$(cat aliyunFC/taskrunner/VERSION)"
+        docker buildx build --provenance=false --sbom=false \
+          -f aliyunFC/taskrunner/Dockerfile \
+          --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
+          --output type=image,name="$ACR_IMAGE:$IMAGE_VERSION",push=true,oci-mediatypes=false \
+          --output type=image,name="$ACR_IMAGE:latest",push=true,oci-mediatypes=false \
+          .
+    - name: 校验 ACR 上 tag 为单平台 manifest
+      script: |
+        set -euo pipefail
+        IMAGE_VERSION="$(cat aliyunFC/taskrunner/VERSION)"
+        for tag in "$IMAGE_VERSION" latest; do
+          out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)" || { echo "!! 无法读取 ${ACR_IMAGE}:$tag" >&2; exit 1; }
+          if printf '%s' "$out" | grep -q '"manifests"' && printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
+            echo "!! ${ACR_IMAGE}:$tag 含 unknown 平台项(attestation)" >&2; exit 1;
+          fi
+        done
+
 main:
   push:
     cloakbrowser:
@@ -63,9 +95,18 @@ main:
       <<: *acr-build
       ifModify:
         - aliyunFC/cloakbrowser/**
+    taskrunner:
+      name: taskrunner 镜像构建并推送 ACR
+      <<: *taskrunner-build
+      ifModify:
+        - aliyunFC/taskrunner/**
+        - core/**
 
 $:
   web_trigger_build_push:
     cloakbrowser:
       name: "手动触发: 强制构建并推送 ACR"
       <<: *acr-build
+    taskrunner:
+      name: "手动触发: 强制构建并推送 taskrunner"
+      <<: *taskrunner-build

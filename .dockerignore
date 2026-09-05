@@ -1,0 +1,20 @@
+# taskrunner 镜像构建上下文 = 仓库根，这里排除无关/大体积目录，加速构建。
+# （cloakbrowser 镜像用自己的目录作上下文，不受本文件影响。）
+.git
+.venv
+venv
+**/__pycache__
+*.pyc
+*.pyo
+node_modules
+panel/node_modules
+panel/dist
+tmpcode
+cloakbrowser
+aliyunFC/cloakbrowser
+*.sqlite3
+*.sqlite3-*
+db.sqlite3-*
+.secrets
+.idea
+.vscode
