@@ -1,0 +1,513 @@
+ROSTemplateFormatVersion: '2015-09-01'
+Description:
+  zh-cn: >-
+    cloakbrowser-serverless 全量部署模板: 新建 VPC/交换机/安全组 + NAT 网关/
+    EIP(固定公网出口)/SNAT + RAM 服务角色 + FC3 自定义容器函数(开启 HEADER_FIELD
+    会话亲和) + Web 触发器。镜像与 EIP 出口均在同一地域, 默认 cn-hangzhou。
+  en: >
+    Full cloakbrowser-serverless stack: VPC/VSwitch/SecurityGroup + NAT gateway /
+    EIP(fixed egress)/SNAT + RAM service role + FC3 custom-container function
+    (HEADER_FIELD session affinity) + HTTP trigger.
+
+Parameters:
+  # ===========================================================================
+  # 全局参数
+  # ===========================================================================
+  NamePrefix:
+    Type: String
+    Default: DouyinSpark
+    Label:
+      zh-cn: 资源名称前缀
+      en: Resource name prefix
+    Description:
+      zh-cn: "VPC/NAT/EIP/安全组等资源名称前缀。注意: 角色名/函数名需在账号内全局唯一, 若已存在请修改。"
+      en: Prefix for resource names. Role/function names must be account-unique.
+  ZoneId:
+    Type: String
+    Default: cn-hangzhou-b
+    Label:
+      zh-cn: 交换机可用区
+      en: Availability zone
+    Description:
+      zh-cn: 交换机可用区, 需属于所选地域。
+      en: VSwitch zone, must belong to the selected region.
+  VpcCidrBlock:
+    Type: String
+    Default: 172.16.0.0/16
+    Label:
+      zh-cn: VPC 网段
+      en: VPC CIDR
+  VSwitchCidrBlock:
+    Type: String
+    Default: 172.16.0.0/24
+    Label:
+      zh-cn: 交换机网段
+      en: VSwitch CIDR
+
+  # ===========================================================================
+  # EIP / 公网出口参数
+  # ===========================================================================
+  EipBandwidth:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 200
+    Label:
+      zh-cn: EIP 带宽 (Mbps)
+      en: EIP bandwidth (Mbps)
+  EipInternetChargeType:
+    Type: String
+    Default: PayByTraffic
+    AllowedValues:
+      - PayByTraffic
+      - PayByBandwidth
+    Label:
+      zh-cn: EIP 计费方式
+      en: EIP metering
+    Description:
+      zh-cn: PayByTraffic 按流量 / PayByBandwidth 按固定带宽。
+      en: PayByTraffic / PayByBandwidth.
+
+  # ===========================================================================
+  # 函数参数
+  # ===========================================================================
+  FunctionName:
+    Type: String
+    Default: DYSparkCloakBrowser
+    Label:
+      zh-cn: 函数名称
+      en: Function name
+  ImageUrl:
+    Type: String
+    Default: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless:latest
+    Label:
+      zh-cn: 容器镜像地址
+      en: Container image URL
+    Description:
+      zh-cn: ACR 个人版镜像, 需与部署地域一致(默认 cn-hangzhou)。
+      en: ACR personal edition image; must be in the same region as the stack.
+  Cpu:
+    Type: Number
+    Default: 1
+    MinValue: 0.05
+    MaxValue: 16
+    Label:
+      zh-cn: CPU (vCPU)
+      en: CPU (vCPU)
+  MemorySize:
+    Type: Number
+    Default: 1536
+    MinValue: 128
+    Label:
+      zh-cn: 内存 (MB)
+      en: Memory (MB)
+  DiskSize:
+    Type: Number
+    Default: 10240
+    AllowedValues:
+      - 512
+      - 10240
+    Label:
+      zh-cn: 磁盘 (MB)
+      en: Disk (MB)
+  FunctionTimeout:
+    Type: Number
+    Default: 600
+    MinValue: 1
+    MaxValue: 86400
+    Label:
+      zh-cn: 容器最大执行时间 (秒)
+      en: Function timeout (s)
+  ContainerPort:
+    Type: Number
+    Default: 9000
+    MinValue: 1
+    MaxValue: 65535
+    Label:
+      zh-cn: 容器监听端口
+      en: Container port
+  TriggerName:
+    Type: String
+    Default: webTrigger
+    Label:
+      zh-cn: Web 触发器名称
+      en: Trigger name
+  TriggerAuthType:
+    Type: String
+    Default: anonymous
+    AllowedValues:
+      - anonymous
+      - function
+    Label:
+      zh-cn: 触发器鉴权方式
+      en: Trigger auth type
+    Description:
+      zh-cn: anonymous 无需鉴权 / function 需函数签名。
+      en: anonymous / function.
+
+  # ===========================================================================
+  # 会话亲和参数 (HEADER_FIELD, 请求头键名 sessionid)
+  # ===========================================================================
+  SessionAffinityHeaderFieldName:
+    Type: String
+    Default: sessionid
+    Label:
+      zh-cn: 会话亲和请求头名
+      en: Affinity header name
+    Description:
+      zh-cn: 5-40 字符, 字母开头, 不能以 x-fc- 前缀开头。
+      en: 5-40 chars, start with a letter, not prefixed with x-fc-.
+  SessionTTLSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 1
+    MaxValue: 21600
+    Label:
+      zh-cn: 会话最长生命周期 (秒)
+      en: Session TTL (s)
+  SessionIdleTimeoutSeconds:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 21600
+    Label:
+      zh-cn: 会话空闲等待时间 (秒)
+      en: Session idle timeout (s)
+  SessionConcurrencyPerInstance:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 200
+    Label:
+      zh-cn: 单实例最大 Session 数
+      en: Session concurrency per instance
+  DisableSessionIdReuse:
+    Type: Boolean
+    Default: false
+    Label:
+      zh-cn: Session 过期后拒绝复用
+      en: Disable session id reuse
+
+  # ===========================================================================
+  # 健康检查
+  # ===========================================================================
+  HealthCheckUrl:
+    Type: String
+    Default: /
+    Label:
+      zh-cn: 健康检查探测路径
+      en: Health check path
+  HealthInitialDelaySeconds:
+    Type: Number
+    Default: 5
+    MinValue: 0
+    MaxValue: 120
+    Label:
+      zh-cn: 启动后延迟探测 (秒)
+      en: Initial delay (s)
+  HealthPeriodSeconds:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 120
+    Label:
+      zh-cn: 健康检查周期 (秒)
+      en: Check period (s)
+  HealthTimeoutSeconds:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 3
+    Label:
+      zh-cn: 健康检查超时 (秒)
+      en: Check timeout (s)
+
+Resources:
+  # ===========================================================================
+  # 网络: VPC + 交换机 + 安全组
+  # ===========================================================================
+  Vpc:
+    Type: ALIYUN::ECS::VPC
+    Properties:
+      CidrBlock:
+        Ref: VpcCidrBlock
+      VpcName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - vpc
+      Description: cloakbrowser dedicated vpc
+
+  VSwitch:
+    Type: ALIYUN::ECS::VSwitch
+    Properties:
+      ZoneId:
+        Ref: ZoneId
+      CidrBlock:
+        Ref: VSwitchCidrBlock
+      VpcId:
+        Ref: Vpc
+      VSwitchName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - vswitch
+      Description: cloakbrowser function vswitch
+
+  SecurityGroup:
+    Type: ALIYUN::ECS::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: Vpc
+      SecurityGroupName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - sg
+      Description: cloakbrowser fc3 function security group
+      SecurityGroupEgress:
+        - IpProtocol: all
+          PortRange: -1/-1
+          NicType: intranet
+          DestCidrIp: 0.0.0.0/0
+          Policy: accept
+          Priority: 1
+
+  # ===========================================================================
+  # 公网: NAT 网关 + EIP + 关联 + SNAT (固定公网出口 IP)
+  # ===========================================================================
+  NatGateway:
+    Type: ALIYUN::VPC::NatGateway
+    Properties:
+      VpcId:
+        Ref: Vpc
+      VSwitchId:
+        Ref: VSwitch
+      NatType: Enhanced
+      NetworkType: internet
+      InternetChargeType: PayByLcu
+      NatGatewayName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - nat
+      Description: cloakbrowser fixed egress
+
+  Eip:
+    Type: ALIYUN::VPC::EIP
+    Properties:
+      Bandwidth:
+        Ref: EipBandwidth
+      InternetChargeType:
+        Ref: EipInternetChargeType
+      Isp: BGP
+      Name:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - eip
+
+  EipAssociation:
+    Type: ALIYUN::VPC::EIPAssociation
+    Properties:
+      AllocationId:
+        Ref: Eip
+      InstanceId:
+        Ref: NatGateway
+      Mode: NAT
+
+  SnatEntry:
+    Type: ALIYUN::VPC::SnatEntry
+    DependsOn:
+      - EipAssociation
+    Properties:
+      SnatTableId:
+        Fn::GetAtt:
+          - NatGateway
+          - SNatTableId
+      SourceVSwitchIds:
+        - Ref: VSwitch
+      SnatIp:
+        Fn::GetAtt:
+          - Eip
+          - EipAddress
+      SnatEntryName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - snat
+
+  # ===========================================================================
+  # RAM 角色: FC 服务角色 (fc.aliyuncs.com 承担) + 系统策略
+  # ===========================================================================
+  Role:
+    Type: ALIYUN::RAM::Role
+    Properties:
+      RoleName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - fc3-role
+      Description: FC service role for cloakbrowser
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - fc.aliyuncs.com
+        Version: '1'
+
+  LogPolicy:
+    Type: ALIYUN::RAM::AttachPolicyToRole
+    Properties:
+      PolicyName: AliyunLogFullAccess
+      PolicyType: System
+      RoleName:
+        Ref: Role
+
+  EniPolicy:
+    Type: ALIYUN::RAM::AttachPolicyToRole
+    Properties:
+      PolicyName: AliyunECSNetworkInterfaceManagementAccess
+      PolicyType: System
+      RoleName:
+        Ref: Role
+
+  # ===========================================================================
+  # FC3 函数 (自定义容器) + Web(HTTP) 触发器
+  # ===========================================================================
+  Function:
+    Type: ALIYUN::FC3::Function
+    DependsOn:
+      - LogPolicy
+      - EniPolicy
+    Properties:
+      FunctionName:
+        Ref: FunctionName
+      Description: CloakBrowser stealth Chromium remote debugging + websockets proxy
+      Runtime: custom-container
+      Handler: index.handler
+      Cpu:
+        Ref: Cpu
+      MemorySize:
+        Ref: MemorySize
+      DiskSize:
+        Ref: DiskSize
+      Timeout:
+        Ref: FunctionTimeout
+      InstanceConcurrency: 200
+      InternetAccess: false
+      Role:
+        Fn::GetAtt:
+          - Role
+          - Arn
+      SessionAffinity: HEADER_FIELD
+      SessionAffinityConfig:
+        affinityHeaderFieldName:
+          Ref: SessionAffinityHeaderFieldName
+        sessionIdleTimeoutInSeconds:
+          Ref: SessionIdleTimeoutSeconds
+        sessionTTLInSeconds:
+          Ref: SessionTTLSeconds
+        sessionConcurrencyPerInstance:
+          Ref: SessionConcurrencyPerInstance
+        disableSessionIdReuse:
+          Ref: DisableSessionIdReuse
+      CustomContainerConfig:
+        Image:
+          Ref: ImageUrl
+        Port:
+          Ref: ContainerPort
+        HealthCheckConfig:
+          HttpGetUrl:
+            Ref: HealthCheckUrl
+          InitialDelaySeconds:
+            Ref: HealthInitialDelaySeconds
+          PeriodSeconds:
+            Ref: HealthPeriodSeconds
+          TimeoutSeconds:
+            Ref: HealthTimeoutSeconds
+          SuccessThreshold: 1
+          FailureThreshold: 3
+      VpcConfig:
+        VpcId:
+          Ref: Vpc
+        VSwitchIds:
+          - Ref: VSwitch
+        SecurityGroupId:
+          Ref: SecurityGroup
+      LogConfig:
+        LogBeginRule: None
+      Tags:
+        - Key: Service
+          Value:
+            Ref: NamePrefix
+
+  WebTrigger:
+    Type: ALIYUN::FC3::Trigger
+    DependsOn:
+      - Function
+    Properties:
+      FunctionName:
+        Ref: FunctionName
+      TriggerName:
+        Ref: TriggerName
+      TriggerType: http
+      Qualifier: LATEST
+      Description: cloakbrowser web trigger
+      TriggerConfig:
+        authType:
+          Ref: TriggerAuthType
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - HEAD
+
+Outputs:
+  EipId:
+    Description: 固定公网出口 IP 的 EIP 实例 ID
+    Value:
+      Ref: Eip
+  EipIpAddress:
+    Description: 固定公网出口公网 IP 地址
+    Value:
+      Fn::GetAtt:
+        - Eip
+        - EipAddress
+  NatGatewayId:
+    Description: NAT 网关 ID
+    Value:
+      Ref: NatGateway
+  VpcId:
+    Description: VPC ID
+    Value:
+      Ref: Vpc
+  VSwitchId:
+    Description: 交换机 ID
+    Value:
+      Ref: VSwitch
+  SecurityGroupId:
+    Description: 安全组 ID
+    Value:
+      Ref: SecurityGroup
+  TriggerUrlInternet:
+    Description: Web 触发器公网访问地址
+    Value:
+      Fn::GetAtt:
+        - WebTrigger
+        - UrlInternet
+  TriggerUrlIntranet:
+    Description: Web 触发器内网访问地址
+    Value:
+      Fn::GetAtt:
+        - WebTrigger
+        - UrlIntranet
+  FunctionName:
+    Description: 函数名称
+    Value:
+      Fn::GetAtt:
+        - Function
+        - FunctionName
