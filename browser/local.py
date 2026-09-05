@@ -474,8 +474,10 @@ async def stop_async(pid: int, **kwargs: Any) -> dict:
 # user_data_dir、端口、时间戳）以 base64(JSON) 存入 BrowserInstance.cfg，pid 存
 # pid 列——从而“通过 sessionid 取回浏览器”，且进程重启后可重新认领/清理孤儿。
 #
-# 注意：管理层无法观测真实 CDP 流量，故“空闲”以“上次经 acquire/get 触碰”计；
-# 需要保活超过 idle 超时，请周期性调用 get(sessionid) 作为心跳。
+# 空闲判定（与云端 FC 语义对齐）：管理器不在 CDP 数据链路上（调用方直连 chrome
+# debug 端口），无法观测真实流量，故通过解析 /proc/net/tcp(6) 判断“debug 端口是否
+# 还有 CDP 客户端连接”——有连接则视为在用、绝不回收；断开约 idle 秒后回收；无论
+# 是否连接，超过 TTL 一律回收（硬顶）。
 
 # launch() 接受的启动/指纹参数白名单（过滤上层透传的其它键）
 _LAUNCH_KEYS = frozenset({
@@ -510,6 +512,58 @@ def _cdp_ok(host: str, port: int, timeout: float = 1.5) -> bool:
         return bool(isinstance(data, dict) and data.get("webSocketDebuggerUrl"))
     except Exception:  # noqa: BLE001
         return False
+
+
+# Linux /proc/net/tcp 连接状态码：01=ESTABLISHED，0A=LISTEN
+_TCP_ESTABLISHED = "01"
+
+
+def _parse_established_ports(proc_text: str) -> set[int]:
+    """从 /proc/net/tcp(6) 文本解析出所有处于 ESTABLISHED 状态的本地端口。
+
+    行格式（首行为表头）：``sl local_address rem_address st ...``，其中
+    ``local_address`` 形如 ``0100007F:2382``（IP:PORT，端口为 4 位十六进制）。
+    """
+    ports: set[int] = set()
+    for line in proc_text.splitlines()[1:]:  # 跳过表头
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        local_addr, state = fields[1], fields[3]
+        if state != _TCP_ESTABLISHED:
+            continue
+        hexport = local_addr.rsplit(":", 1)[-1]
+        try:
+            ports.add(int(hexport, 16))
+        except ValueError:
+            continue
+    return ports
+
+
+def _has_cdp_client(port: int, host: str = "127.0.0.1") -> bool:
+    """debug 端口上是否存在已建立的 CDP 客户端连接（判定“在用”）。
+
+    读取 /proc/net/tcp 与 /proc/net/tcp6，取 ESTABLISHED 连接的本地端口集合。
+    读取/解析失败时**保守返回 True**（宁可不回收，交由 TTL 硬顶兜底），避免误杀
+    正在使用的会话。
+    """
+    if not port:
+        return False
+    port = int(port)
+    ok_any = False
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path, "r", encoding="ascii", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        ok_any = True
+        if port in _parse_established_ports(text):
+            return True
+    if not ok_any:
+        # 两个文件都读不到（非 Linux/受限环境）：无法判定，保守视为“在用”
+        return True
+    return False
 
 
 class LocalBackend:
@@ -650,7 +704,13 @@ class LocalBackend:
                 logger.exception("本地浏览器 reaper 单轮异常（忽略，继续）")
 
     async def _reap_once(self) -> None:
-        """扫描全部实例：进程已死、或超过 TTL/idle 的一律停止并删除。"""
+        """扫描全部实例并按“连接感知空闲 + TTL 硬顶”回收。
+
+        - 进程已死 → 回收；
+        - 超过 TTL（最长生命周期）→ 回收（即使仍有客户端连接）；
+        - 仍在 TTL 内：若 debug 端口尚有 CDP 客户端连接 → 视为在用，刷新 last_used
+          保活、不回收；已无连接且距上次“在用/触碰”超过 idle 秒 → 回收。
+        """
         from db import BrowserInstanceDB
 
         now = time.time()
@@ -658,16 +718,29 @@ class LocalBackend:
             meta = _decode_meta(rec["cfg"])
             if meta.get("mode") != "local":
                 continue
+            sessionid = rec["sessionid"]
             pid = rec["pid"]
-            dead = not await asyncio.to_thread(is_alive, pid)
             created = float(meta.get("created_ts") or 0)
+
+            dead = not await asyncio.to_thread(is_alive, pid)
+            ttl_over = bool(self.ttl and now - created > self.ttl)
+            if dead or ttl_over:
+                await self._stop_and_delete(sessionid, pid, meta)
+                continue
+
+            # 仍存活且未到 TTL：按“是否还有客户端连接”判定空闲
+            port = int(meta.get("port") or 0)
+            host = meta.get("debug_host", "127.0.0.1")
+            has_client = await asyncio.to_thread(_has_cdp_client, port, host)
+            if has_client:
+                # 保活：刷新 last_used，使断开后从此刻起算 idle 超时
+                meta["last_used"] = now
+                await BrowserInstanceDB.update(sessionid, cfg=_encode_meta(meta))
+                continue
+
             last = float(meta.get("last_used") or created)
-            expired = (
-                (self.ttl and now - created > self.ttl)
-                or (self.idle and now - last > self.idle)
-            )
-            if dead or expired:
-                await self._stop_and_delete(rec["sessionid"], pid, meta)
+            if self.idle and now - last > self.idle:
+                await self._stop_and_delete(sessionid, pid, meta)
 
 
 # ---------------------------------------------------------------------------

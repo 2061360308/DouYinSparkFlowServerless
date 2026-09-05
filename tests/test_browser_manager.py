@@ -61,6 +61,21 @@ async def _count():
     return await BrowserInstanceDB.count()
 
 
+async def _set_meta(sessionid, **fields):
+    from db import BrowserInstanceDB
+    rec = await BrowserInstanceDB.get(sessionid)
+    meta = local_mod._decode_meta(rec["cfg"])
+    meta.update(fields)
+    await BrowserInstanceDB.update(sessionid, cfg=local_mod._encode_meta(meta))
+    return meta
+
+
+async def _get_meta(sessionid):
+    from db import BrowserInstanceDB
+    rec = await BrowserInstanceDB.get(sessionid)
+    return local_mod._decode_meta(rec["cfg"]) if rec else None
+
+
 class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from db.init_db import init_db
@@ -138,6 +153,51 @@ class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await _count(), 0)
         finally:
             local_mod.launch, local_mod.is_alive, local_mod._cdp_ok, local_mod.stop = orig
+            os.environ.pop("DouyinSparkDocker", None)
+
+    # ------------------------------------------------------------------
+    async def test_local_reaper_connection_aware(self):
+        """本地 reaper：连接中不回收(且保活)、断开超空闲回收、TTL 到点强制回收。"""
+        os.environ["DouyinSparkDocker"] = "1"
+        orig = (local_mod.launch, local_mod.is_alive, local_mod._cdp_ok,
+                local_mod.stop, local_mod._has_cdp_client)
+        local_mod.launch = _fake_launch
+        local_mod.is_alive = _fake_is_alive
+        local_mod._cdp_ok = _fake_cdp_ok
+        local_mod.stop = _fake_stop
+        try:
+            await BrowserManager._reset_for_test()
+            mgr = await BrowserManager.get_instance()
+            await mgr.backend.stop_reaper()
+            mgr.concurrency = 10
+            mgr.backend.ttl = 600
+            mgr.backend.idle = 30
+
+            # 1) 有客户端连接 → 不回收，且 last_used 被刷新（保活）
+            local_mod._has_cdp_client = lambda *a, **k: True
+            r = await mgr.acquire("k1", seed="1")
+            self.assertTrue(r["ok"])
+            await _set_meta("k1", last_used=0.0)  # 人为置很旧
+            await mgr.backend._reap_once()
+            self.assertEqual(await _count(), 1)   # 连接中，未回收
+            self.assertGreater((await _get_meta("k1"))["last_used"], 0.0)  # 已保活
+
+            # 2) 断开 + 超过空闲 → 回收
+            local_mod._has_cdp_client = lambda *a, **k: False
+            await _set_meta("k1", last_used=1.0)  # 远早于 now-idle
+            await mgr.backend._reap_once()
+            self.assertEqual(await _count(), 0)
+
+            # 3) TTL 到点：即便仍有连接也强制回收
+            local_mod._has_cdp_client = lambda *a, **k: True
+            r2 = await mgr.acquire("k2", seed="2")
+            self.assertTrue(r2["ok"])
+            await _set_meta("k2", created_ts=1.0)  # 远超 TTL
+            await mgr.backend._reap_once()
+            self.assertEqual(await _count(), 0)
+        finally:
+            (local_mod.launch, local_mod.is_alive, local_mod._cdp_ok,
+             local_mod.stop, local_mod._has_cdp_client) = orig
             os.environ.pop("DouyinSparkDocker", None)
 
     # ------------------------------------------------------------------
@@ -252,6 +312,22 @@ class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
         r = await mgr.acquire("x1")
         self.assertFalse(r["ok"])
         self.assertIn("未配置", r["msg"])
+
+
+class TestTcpParse(unittest.TestCase):
+    """/proc/net/tcp ESTABLISHED 端口解析（纯函数，无 DB/网络）。"""
+
+    def test_parse_established_ports(self):
+        text = (
+            "  sl  local_address rem_address   st tx_queue rx_queue\n"
+            "   0: 0100007F:2382 0100007F:C1A2 01 00000000:00000000\n"  # EST 9090
+            "   1: 0100007F:2383 00000000:0000 0A 00000000:00000000\n"  # LISTEN 9091
+            "   2: 0100007F:1F90 0100007F:8888 01 00000000:00000000\n"  # EST 8080
+        )
+        ports = local_mod._parse_established_ports(text)
+        self.assertIn(9090, ports)
+        self.assertIn(8080, ports)
+        self.assertNotIn(9091, ports)  # LISTEN 不计
 
 
 def tearDownModule():
