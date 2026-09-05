@@ -7,5 +7,13 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
+    // 开发时把 /api 代理到本地 FastAPI（uvicorn api.index:app --port 8000），
+    // 使前端与接口同源，免 CORS。
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
   },
 })

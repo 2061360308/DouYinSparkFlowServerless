@@ -18,15 +18,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
+import logging
 import os
 import shutil
 import signal
 import subprocess
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Optional, Union
+
+logger = logging.getLogger("browser.local")
 
 # ---------------------------------------------------------------------------
 # 结果码（与 db 包风格保持一致：ok + code + msg）
@@ -459,6 +464,210 @@ async def launch_async(*args: Any, **kwargs: Any) -> dict:
 
 async def stop_async(pid: int, **kwargs: Any) -> dict:
     return await asyncio.to_thread(stop, pid, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# 按 sessionid 组织的本地浏览器后端（有状态：仅服务器 docker 部署下使用）
+# ---------------------------------------------------------------------------
+# 与云函数后端接口对齐（acquire/get/destroy），但本地为长驻进程，可持久化管理
+# chrome OS 进程，并通过后台 reaper 做空闲/TTL 超时自动回收。运行态（ws 地址、
+# user_data_dir、端口、时间戳）以 base64(JSON) 存入 BrowserInstance.cfg，pid 存
+# pid 列——从而“通过 sessionid 取回浏览器”，且进程重启后可重新认领/清理孤儿。
+#
+# 注意：管理层无法观测真实 CDP 流量，故“空闲”以“上次经 acquire/get 触碰”计；
+# 需要保活超过 idle 超时，请周期性调用 get(sessionid) 作为心跳。
+
+# launch() 接受的启动/指纹参数白名单（过滤上层透传的其它键）
+_LAUNCH_KEYS = frozenset({
+    "seed", "region", "locale", "timezone", "proxy",
+    "platform", "headless", "extra_args", "binary", "host",
+})
+
+
+def _encode_meta(meta: dict) -> str:
+    """运行态 dict -> base64(JSON)（落入 BrowserInstance.cfg）。"""
+    return base64.b64encode(
+        json.dumps(meta, ensure_ascii=False).encode("utf-8")
+    ).decode("ascii")
+
+
+def _decode_meta(cfg: str) -> dict:
+    """BrowserInstance.cfg -> 运行态 dict（解析失败返回空 dict）。"""
+    try:
+        return json.loads(base64.b64decode(cfg.encode("ascii")).decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _cdp_ok(host: str, port: int, timeout: float = 1.5) -> bool:
+    """探测本地 CDP /json/version 是否可用（校验浏览器是否真的还能用）。"""
+    if not port:
+        return False
+    url = f"http://{host or '127.0.0.1'}:{int(port)}/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.load(resp)
+        return bool(isinstance(data, dict) and data.get("webSocketDebuggerUrl"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class LocalBackend:
+    """本地浏览器后端：按 sessionid 懒启动/复用/校验/销毁，并做超时自动回收。
+
+    返回结构与云端对齐：
+    ``{"ok","code","sessionid","ws_url","headers","mode","pid","msg"}``
+    （本地 ``headers`` 恒为空 dict——本地 CDP 无需签名）。
+    """
+
+    mode = "local"
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: int = 600,
+        idle_timeout_seconds: int = 30,
+        reaper_interval: Optional[float] = None,
+    ) -> None:
+        self.ttl = max(0, int(ttl_seconds or 0))
+        self.idle = max(0, int(idle_timeout_seconds or 0))
+        # reaper 周期：取 idle/ttl 中较小值的一半，夹在 [5s, 60s]，缺省 15s
+        base = min([v for v in (self.idle, self.ttl) if v] or [30])
+        self.reaper_interval = float(reaper_interval or max(5.0, min(60.0, base / 2)))
+        self._reaper_task: Optional[asyncio.Task] = None
+
+    # ---- reaper 生命周期 ----
+    async def start_reaper(self) -> None:
+        if self._reaper_task is None or self._reaper_task.done():
+            self._reaper_task = asyncio.create_task(self._reaper_loop())
+
+    async def stop_reaper(self) -> None:
+        if self._reaper_task is not None:
+            self._reaper_task.cancel()
+            try:
+                await self._reaper_task
+            except asyncio.CancelledError:
+                pass
+            self._reaper_task = None
+
+    async def reconcile(self) -> None:
+        """进程重启后清理 DB 中已死/超时的实例行（存活且未超时的进程予以保留）。"""
+        await self._reap_once()
+
+    # ---- 主要能力 ----
+    async def try_reuse(self, sessionid: str) -> Optional[dict]:
+        """存在且可用则复用并刷新 last_used；失效则清理并返回 None。"""
+        from db import BrowserInstanceDB
+
+        rec = await BrowserInstanceDB.get(sessionid)
+        if not rec:
+            return None
+        meta = _decode_meta(rec["cfg"])
+        pid = rec["pid"]
+        alive = await asyncio.to_thread(is_alive, pid)
+        if alive and await asyncio.to_thread(
+            _cdp_ok, meta.get("debug_host", "127.0.0.1"), int(meta.get("port") or 0)
+        ):
+            meta["last_used"] = time.time()
+            await BrowserInstanceDB.update(sessionid, cfg=_encode_meta(meta))
+            return self._result(sessionid, meta.get("ws_url", ""), pid, "复用现有本地浏览器")
+        await self._stop_and_delete(sessionid, pid, meta)
+        return None
+
+    async def create(self, sessionid: str, fp: dict) -> dict:
+        """启动新浏览器并落库；写库冲突（并发同 sessionid）则回退复用既有。"""
+        from db import BrowserInstanceDB
+
+        launch_kwargs = {
+            k: v for k, v in (fp or {}).items() if k in _LAUNCH_KEYS and v is not None
+        }
+        info = await launch_async(**launch_kwargs)
+        pid = info["pid"]
+        meta = {
+            "mode": "local",
+            "fp": launch_kwargs,
+            "ws_url": info["ws_url"],
+            "user_data_dir": info.get("user_data_dir"),
+            "debug_host": info.get("debug_host", "127.0.0.1"),
+            "port": info.get("port"),
+            "created_ts": time.time(),
+            "last_used": time.time(),
+        }
+        res = await BrowserInstanceDB.create(sessionid, cfg=_encode_meta(meta), pid=pid)
+        if not res["ok"]:
+            await stop_async(pid, cleanup_dir=meta.get("user_data_dir"))
+            reused = await self.try_reuse(sessionid)
+            if reused:
+                return reused
+            return {
+                "ok": False, "code": ERR_LAUNCH_FAILED, "sessionid": sessionid,
+                "ws_url": "", "headers": {}, "mode": "local", "pid": 0,
+                "msg": "创建本地浏览器失败（写库冲突且无法复用）",
+            }
+        return self._result(sessionid, info["ws_url"], pid, "本地浏览器已就绪")
+
+    async def get(self, sessionid: str) -> Optional[dict]:
+        """按 sessionid 取回可用浏览器（兼作 keepalive 心跳，刷新 last_used）。"""
+        return await self.try_reuse(sessionid)
+
+    async def destroy(self, sessionid: str) -> dict:
+        """终止本地浏览器进程并删除记录（幂等）。"""
+        from db import BrowserInstanceDB
+
+        rec = await BrowserInstanceDB.get(sessionid)
+        if not rec:
+            return {"ok": True, "code": OK, "sessionid": sessionid,
+                    "mode": "local", "msg": "无对应实例"}
+        meta = _decode_meta(rec["cfg"])
+        await self._stop_and_delete(sessionid, rec["pid"], meta)
+        return {"ok": True, "code": OK, "sessionid": sessionid,
+                "mode": "local", "msg": "本地浏览器已销毁"}
+
+    # ---- 内部 ----
+    def _result(self, sessionid: str, ws_url: str, pid: int, msg: str) -> dict:
+        return {
+            "ok": True, "code": OK, "sessionid": sessionid, "ws_url": ws_url,
+            "headers": {}, "mode": "local", "pid": pid, "msg": msg,
+        }
+
+    async def _stop_and_delete(self, sessionid: str, pid: int, meta: dict) -> None:
+        from db import BrowserInstanceDB
+
+        try:
+            await stop_async(pid, cleanup_dir=meta.get("user_data_dir"))
+        except Exception:  # noqa: BLE001
+            logger.exception("停止本地浏览器进程失败 pid=%s", pid)
+        await BrowserInstanceDB.delete(sessionid)
+
+    async def _reaper_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(self.reaper_interval)
+                await self._reap_once()
+            except asyncio.CancelledError:
+                break
+            except Exception:  # noqa: BLE001
+                logger.exception("本地浏览器 reaper 单轮异常（忽略，继续）")
+
+    async def _reap_once(self) -> None:
+        """扫描全部实例：进程已死、或超过 TTL/idle 的一律停止并删除。"""
+        from db import BrowserInstanceDB
+
+        now = time.time()
+        for rec in await BrowserInstanceDB.list_all():
+            meta = _decode_meta(rec["cfg"])
+            if meta.get("mode") != "local":
+                continue
+            pid = rec["pid"]
+            dead = not await asyncio.to_thread(is_alive, pid)
+            created = float(meta.get("created_ts") or 0)
+            last = float(meta.get("last_used") or created)
+            expired = (
+                (self.ttl and now - created > self.ttl)
+                or (self.idle and now - last > self.idle)
+            )
+            if dead or expired:
+                await self._stop_and_delete(rec["sessionid"], pid, meta)
 
 
 # ---------------------------------------------------------------------------

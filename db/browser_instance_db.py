@@ -22,6 +22,7 @@ from .connection import with_db
 # 返回给调用方的状态码
 OK = 0  # 操作成功
 ERR_SESSION_EXISTS = 1001  # sessionid 已存在，创建失败
+ERR_SESSION_NOT_FOUND = 1002  # sessionid 不存在，更新失败
 
 # 业务返回结构统一为 {"ok": bool, "code": int, "detail": dict|None, "msg": str}
 OK_MSG = "操作成功"
@@ -80,3 +81,44 @@ class BrowserInstanceDB:
         """
         await BrowserInstance.filter(sessionid=sessionid).delete()
         return _resp(True, OK, msg="删除成功")
+
+    @staticmethod
+    @with_db
+    async def update(
+        sessionid: str,
+        *,
+        cfg: Optional[str] = None,
+        pid: Optional[int] = None,
+    ) -> dict:
+        """更新已存在实例的 cfg / pid（用于刷新运行态，如 last_used、重启后回填 pid）。
+
+        仅更新传入的非 None 字段；记录不存在时返回失败与失败码（不新建）。
+
+        返回: {"ok": bool, "code": int, "detail": dict|None, "msg": str}
+        """
+        row = await BrowserInstance.get_or_none(sessionid=sessionid)
+        if row is None:
+            return _resp(False, ERR_SESSION_NOT_FOUND, msg="sessionid 不存在")
+        fields: list[str] = []
+        if cfg is not None:
+            row.cfg = cfg
+            fields.append("cfg")
+        if pid is not None:
+            row.pid = pid
+            fields.append("pid")
+        if fields:
+            await row.save(update_fields=fields)
+        return _resp(True, OK, detail=_row_to_dict(row))
+
+    @staticmethod
+    @with_db
+    async def count() -> int:
+        """当前受管浏览器实例总数（并发闸据此判断是否已达上限）。"""
+        return await BrowserInstance.all().count()
+
+    @staticmethod
+    @with_db
+    async def list_all() -> list[dict]:
+        """列出全部实例（供本地 reaper 扫描超时/死亡实例、重启后重认领）。"""
+        rows = await BrowserInstance.all()
+        return [_row_to_dict(r) for r in rows]

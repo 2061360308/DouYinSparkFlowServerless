@@ -39,10 +39,20 @@
 注意：首次使用前请先执行 ``python -m db`` 完成建表。
 """
 
-from .browser_instance_db import BrowserInstanceDB, ERR_SESSION_EXISTS, OK
+from .browser_instance_db import (
+    BrowserInstanceDB,
+    ERR_SESSION_EXISTS,
+    ERR_SESSION_NOT_FOUND,
+    OK,
+)
 from .connection import with_db
 from .models import SYSTEM_CONFIG_KEYS
-from .system_config_db import BrowserConcurrency, SystemConfigDB
+from .system_config_db import (
+    BrowserConcurrency,
+    FcFunctionUrl,
+    FcQualifier,
+    SystemConfigDB,
+)
 
 __all__ = [
     "with_db",
@@ -50,6 +60,9 @@ __all__ = [
     "BrowserInstanceDB",
     "SystemConfigDB",
     "BrowserConcurrency",
+    "FcFunctionUrl",
+    "FcQualifier",
     "OK",
     "ERR_SESSION_EXISTS",
+    "ERR_SESSION_NOT_FOUND",
 ]

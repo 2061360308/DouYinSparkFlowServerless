@@ -11,6 +11,17 @@
 """
 
 import os
+import time
+
+# 统一进程时区为 UTC：Tortoise + SQLite 对 aware datetime 的本地化序列化会破坏
+# 范围比较，这里以 use_tz=False + 全程 naive-UTC 规避（PostgreSQL 亦一致）。
+os.environ.setdefault("TZ", "UTC")
+try:
+    time.tzset()
+except AttributeError:  # 非 POSIX 平台
+    pass
+os.environ["USE_TZ"] = "False"
+os.environ["TIMEZONE"] = "UTC"
 
 from tortoise import fields, models
 
@@ -22,10 +33,14 @@ TORTOISE_ORM = {
     "connections": {"default": DATABASE_URL},
     "apps": {
         "models": {
-            "models": ["db.models"],  # 模型所在模块
+            # 模型所在模块：基础表 + 控制台业务表（由 spark_console 迁移）
+            "models": ["db.models", "db.console_models"],
             "default_connection": "default",
         }
     },
+    # 全程 naive-UTC：数据库存无时区时间，业务层保证写入/比较均为 UTC
+    "use_tz": False,
+    "timezone": "UTC",
 }
 
 
@@ -34,6 +49,11 @@ TORTOISE_ORM = {
 # 需要新增配置时，在此追加键与默认值，再执行一次 python -m db.init_db 即可。
 SYSTEM_CONFIG_KEYS: dict[str, str] = {
     "browser_concurrency": "4",  # 浏览器并发数
+
+    # ═══ 云函数浏览器（browser/cloud.py）运行期配置 ═══
+    # 部署产出的 HTTP 触发器公网地址；安装向导完成后回写此键，云端模式据此签名调用。
+    "fc_function_url": "",        # 如 https://<fn>-<uid>.<region>.fcapp.run
+    "fc_qualifier": "LATEST",     # 云函数版本/别名（Get/DeleteSession 用）
 
     # ═══ FC 自动部署向导（fc/provision_image_function.py）配置 ═══
     # 键的字段元数据（类型/默认值/所属向导步骤）以该模块的 CONFIG_FIELDS 为准，

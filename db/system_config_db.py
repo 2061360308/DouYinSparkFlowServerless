@@ -73,6 +73,20 @@ class BrowserConcurrency(_ConfigItemBase):
     TYPE = int
 
 
+class FcFunctionUrl(_ConfigItemBase):
+    """系统配置项：云函数 HTTP 触发器公网地址（键 fc_function_url）。"""
+
+    KEY = "fc_function_url"
+    TYPE = str
+
+
+class FcQualifier(_ConfigItemBase):
+    """系统配置项：云函数版本/别名（键 fc_qualifier，默认 LATEST）。"""
+
+    KEY = "fc_qualifier"
+    TYPE = str
+
+
 # ---------------------------------------------------------------------------
 # 通用按键读写（供动态按键字符串访问；常规场景建议使用上面的配置项类）
 # ---------------------------------------------------------------------------

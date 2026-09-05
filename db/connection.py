@@ -29,15 +29,23 @@ _conn_refs = 0  # 当前占用连接的调用方数量（实现可重入/计数�
 T = TypeVar("T")
 
 
-async def _ensure_connected() -> None:
-    """确保数据库已连接（幂等、并发安全）。"""
+async def _ensure_connected(enable_global_fallback: bool = False) -> None:
+    """确保数据库已连接（幂等、并发安全）。
+
+    enable_global_fallback: 供长驻服务（FastAPI）开启 Tortoise 全局回退上下文，
+    使 lifespan 后台任务初始化的连接能被各请求任务复用（Tortoise 1.x 要求）。
+    """
     global _db_ready
     if _db_ready:
         return
     async with _conn_lock:
         if not _db_ready:
             # _create_db=True：SQLite 文件或 PostgreSQL 库不存在时自动创建
-            await Tortoise.init(config=TORTOISE_ORM, _create_db=True)
+            await Tortoise.init(
+                config=TORTOISE_ORM,
+                _create_db=True,
+                _enable_global_fallback=enable_global_fallback,
+            )
             _db_ready = True
 
 
@@ -68,3 +76,20 @@ def with_db(func: Callable[..., Any]) -> Callable[..., Any]:
             await _release_connected()
 
     return wrapper
+
+
+async def open_persistent() -> None:
+    """服务常驻模式：建立连接并钉住一个永久引用。
+
+    供长驻服务（如 FastAPI lifespan 启动）调用，使后续每个 ``with_db`` 调用
+    结束时引用计数不会归零、连接保持温热，避免 serverless 每请求 init/close
+    的高开销。与 ``close_persistent`` 成对使用。
+    """
+    global _conn_refs
+    await _ensure_connected(enable_global_fallback=True)
+    _conn_refs += 1
+
+
+async def close_persistent() -> None:
+    """释放常驻引用；无其他占用时关闭连接（供服务停机调用）。"""
+    await _release_connected()

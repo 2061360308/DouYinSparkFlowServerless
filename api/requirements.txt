@@ -1,0 +1,8 @@
+# Vercel Python 函数（控制台 API）依赖 —— 仅 API 层所需，保持冷启动精简。
+# 与仓库根 requirements.txt 的区别：不含阿里云 SDK 等执行面依赖。
+fastapi>=0.116.0
+tortoise-orm>=0.21.0
+asyncpg>=0.29.0
+argon2-cffi>=23.1.0
+cryptography>=45.0.0
+httpx>=0.28.0
