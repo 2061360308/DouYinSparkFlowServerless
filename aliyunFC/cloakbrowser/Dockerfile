@@ -14,11 +14,13 @@
 #     stealth 启动参数(--fingerprint=<seed> --fingerprint-platform=windows
 #     等, 上游默认集即此 3 项)由 app/browser.py 原生生成;
 #   - 第三方 Python 依赖只有 websockets 一个(HTTP 探活/列表用标准库实现);
-#   - 默认 headless(无需 Xvfb), 适配阿里云函数计算等无头平台。
+#   - 默认 headless(无需 Xvfb), 适配阿里云函数计算等无头平台;
+#   - 默认预置 Windows 默认字体(伪装 Windows 的字体指纹自洽, 见第 2 步:
+#     ENABLE_WINDOWS_FONTS=false 可跳过以省 ~230MB 镜像体积)。
 #
 # 国内构建节点适配:
 #   - 无 docker.io 依赖: 基础镜像走 DaoCloud 公共代理, pip 走阿里云,
-#     Chromium 走 GitHub Releases(CNB/ACR 节点已验证可 clone github.com);
+#     Chromium/Windows 字体均走 GitHub 加速镜像(CNB/ACR 节点已验证可 clone github.com);
 #   - 不用 # syntax=docker/dockerfile:1(BuildKit 前端镜像会从 docker.io 拉取)。
 # =============================================================================
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
@@ -56,7 +58,23 @@ ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 # 仅填域名即可: 下方 sed 会整站替换 deb.debian.org / security.debian.org
 ARG APT_MIRROR=mirrors.ustc.edu.cn
 
-# ---- 1. 系统运行库(Chromium 最小依赖集, 不含中文字体/emoji 等大字体) -------
+# 是否预置 Windows 默认字体(防检测关键: 伪装成 Windows 却缺 Segoe UI/
+# 微软雅黑 等字体 = 明显的机器特征, 字体指纹一看就露馅, 见 README"字体"一节)。
+# 默认从 GitHub 仓库 ErwinLiYH/all_win10_fonts(约 230MB/348 个文件, 与原
+# C:\Windows\Fonts 一致)下载并 fc-cache 打进镜像; 设 false 可跳过。
+ARG ENABLE_WINDOWS_FONTS=true
+# 完整自定义 URL(自建内网/OSS 镜像最优先); 为空则用下方加速镜像拉官方包
+ARG WINDOWS_FONTS_URL=""
+# Windows 字体官方 tarball(可整体替换为其它全套字体仓库)
+ARG WINDOWS_FONTS_ARCHIVE="https://github.com/ErwinLiYH/all_win10_fonts/archive/refs/heads/main.tar.gz"
+# 字体下载加速镜像前缀(空格分隔), 依次拼在官方 tarball 前尝试
+ARG WINDOWS_FONTS_MIRRORS="https://gh.07150721.xyz/ https://ghfast.top/ https://gh-proxy.com/ https://ghproxy.net/"
+# 可选: 字体 tarball 的 sha256(首次构建后 sha256sum 计算并回填, 此后强校验)
+ARG WINDOWS_FONTS_SHA256=""
+# 单个字体下载源的总超时(秒)
+ARG WINDOWS_FONTS_TIMEOUT=600
+
+# ---- 1. 系统运行库(Chromium 最小依赖集; 字体另见第 2 步) --------------------
 RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
       sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
     else \
@@ -70,13 +88,57 @@ RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
     libxcb1 libxext6 libxshmfence1 libglib2.0-0 libgtk-3-0 \
     libpangocairo-1.0-0 libcairo-gobject2 libgdk-pixbuf-2.0-0 \
     libxss1 libxtst6 fonts-liberation \
+    fontconfig \
     curl ca-certificates \
     && if [ "${ENABLE_HEADED}" = "true" ]; then \
          apt-get install -y --no-install-recommends xvfb xdotool openbox; \
        fi \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- 2. 下载免费版 stealth Chromium(GitHub Release, 构建期预置进镜像) ------
+# ---- 2. Windows 默认字体(Segoe UI/Calibri/微软雅黑/宋体/...) -----------------
+# 伪装成 Windows 却缺 Windows 字体, 是字体指纹(measureText / document.fonts /
+# 字体枚举)的明显破绽(FingerprintJS / CreepJS / Kasada 即以此判机器)。
+# 构建期把全套 Windows 字体预置进镜像并 fc-cache, 让 Linux 上实际可检测到的
+# 字体集与 Windows persona 自洽。MS 字体为专有授权, 请仅用于私有镜像/自用。
+RUN set -eux; \
+    if [ "${ENABLE_WINDOWS_FONTS}" != "true" ]; then \
+      echo "==> ENABLE_WINDOWS_FONTS=false: 跳过 Windows 字体(防检测能力下降)"; \
+    else \
+      urls=""; \
+      if [ -n "${WINDOWS_FONTS_URL}" ]; then \
+        urls="${WINDOWS_FONTS_URL}"; \
+      else \
+        for m in ${WINDOWS_FONTS_MIRRORS}; do urls="${urls} ${m}${WINDOWS_FONTS_ARCHIVE}"; done; \
+        urls="${urls} ${WINDOWS_FONTS_ARCHIVE}"; \
+      fi; \
+      ok=0; \
+      for u in ${urls}; do \
+        echo "==> 尝试下载 Windows 字体: ${u}"; \
+        if curl -fL --connect-timeout 15 --max-time "${WINDOWS_FONTS_TIMEOUT}" \
+             --retry 2 --retry-delay 2 -o /tmp/winfonts.tar.gz "${u}"; then \
+          if [ -z "${WINDOWS_FONTS_SHA256}" ] || (echo "${WINDOWS_FONTS_SHA256}  /tmp/winfonts.tar.gz" | sha256sum -c - >/dev/null 2>&1); then \
+            echo "==> Windows 字体下载成功: ${u}"; ok=1; break; \
+          else \
+            echo "==> sha256 校验不符, 换下一个源..."; \
+          fi; \
+        else \
+          echo "==> 该源失败(下载错误), 换下一个源..."; \
+        fi; \
+      done; \
+      [ "${ok}" = "1" ] || { echo "所有字体下载源均失败, 请配置 WINDOWS_FONTS_URL/ARCHIVE/MIRRORS" >&2; exit 1; }; \
+      mkdir -p /tmp/winfont_extract /usr/share/fonts/truetype/windows; \
+      tar -xzf /tmp/winfonts.tar.gz -C /tmp/winfont_extract; \
+      rm -f /tmp/winfonts.tar.gz; \
+      find /tmp/winfont_extract -type f \( -iname "*.ttf" -o -iname "*.ttc" -o -iname "*.otf" \) -exec cp -n {} /usr/share/fonts/truetype/windows/ \; ; \
+      rm -rf /tmp/winfont_extract; \
+      fc-cache -f >/dev/null 2>&1 || true; \
+      echo "==> 已安装 Windows 字体(fc-list 前 5 行):"; fc-list | head -n 5; \
+      if ! fc-list | grep -qiE 'segoe ui|microsoft yahei|simsun|calibri'; then \
+        echo "警告: fc-list 中未检测到关键 Windows 字体, 请检查 WINDOWS_FONTS_* 配置" >&2; \
+      fi; \
+    fi
+
+# ---- 3. 下载免费版 stealth Chromium(GitHub Release, 构建期预置进镜像) ------
 # 运行时不再联网; 解压后二进制固定在 /opt/cloakbrowser/chrome
 # 下载源依次尝试: 自定义 URL -> 加速镜像 -> 官方直链, 全部失败才报错退出
 RUN set -eux; \
@@ -121,10 +183,10 @@ RUN set -eux; \
     echo "==> /opt/cloakbrowser:"; ls -la /opt/cloakbrowser | head -30; \
     echo "==> binary check:"; /opt/cloakbrowser/chrome --version
 
-# ---- 3. 唯一的第三方 Python 依赖: websockets(HTTP/WS 代理) ------------------
+# ---- 4. 唯一的第三方 Python 依赖: websockets(HTTP/WS 代理) ------------------
 RUN pip install --no-cache-dir --index-url ${PIP_INDEX_URL} "websockets==17.1"
 
-# ---- 4. 本仓库代码: 编排器 + 浏览器启动 + 转发代理 --------------------------
+# ---- 5. 本仓库代码: 编排器 + 浏览器启动 + 转发代理 --------------------------
 WORKDIR /app
 COPY VERSION ./VERSION
 COPY app/ ./app/
