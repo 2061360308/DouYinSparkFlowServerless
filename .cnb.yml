@@ -1,0 +1,24 @@
+main:
+  push:
+    cloakbrowser:
+      name: cloakbrowser 镜像构建并推送 ACR
+      services:
+        - docker
+      imports:
+        - https://cnb.cool/oilu/key/-/blob/main/secrets.yml
+      env:
+        ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
+        ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless
+      ifModify:
+        - aliyunFC/cloakbrowser/**
+      stages:
+        - name: 登录阿里云 ACR
+          script: echo "$ACR_PASSWORD" | docker login --username="$ACR_USERNAME" --password-stdin "$ACR_REGISTRY"
+        - name: 构建并推送镜像
+          script: |
+            cd aliyunFC/cloakbrowser
+            IMAGE_VERSION="$(cat VERSION)"
+            docker build --build-arg IMAGE_VERSION="$IMAGE_VERSION" -t "$ACR_IMAGE:$IMAGE_VERSION" .
+            docker tag "$ACR_IMAGE:$IMAGE_VERSION" "$ACR_IMAGE:latest"
+            docker push "$ACR_IMAGE:$IMAGE_VERSION"
+            docker push "$ACR_IMAGE:latest"

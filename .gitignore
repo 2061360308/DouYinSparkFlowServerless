@@ -14,4 +14,4 @@ db.sqlite3
 .vscode/
 
 # 浏览器运行产物（Chromium 二进制等，不入库）
-cloakbrowser/
+/cloakbrowser/

@@ -48,7 +48,8 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.http11 import Response
 from websockets.protocol import State
 
-from app.browser import BrowserBusy
+from app import __version__
+from app.browser import BrowserBusy, short_sid
 
 # 说明: 跟随 websockets 最新版(17.x)默认的 asyncio 实现:
 # serve() 的 process_request 回调签名是 (connection, request); 返回
@@ -282,6 +283,7 @@ async def _health_payload(cdp_port: int, headers: Headers,
     body: dict[str, Any] = {
         "status": "ok",
         "service": "cloakbrowser ws proxy",
+        "version": __version__,
         "listen": f"0.0.0.0:{env_int('PROXY_PORT', 9000)}",
         "backend_cdp": f"127.0.0.1:{cdp_port}",
     }
@@ -341,7 +343,7 @@ async def _handle_start(
     except BrowserBusy as exc:
         return _json_response(connection, 409, {"error": str(exc)})
     except Exception as exc:  # noqa: BLE001
-        logger.error("浏览器按会话 %s 启动失败: %s", sid, exc)
+        logger.error("浏览器按会话 %s 启动失败: %s", short_sid(sid), exc)
         return _json_response(connection, 503, {
             "error": "browser startup failed", "detail": str(exc),
         })
@@ -353,7 +355,7 @@ async def _handle_start(
     except Exception:  # noqa: BLE001
         body["browser"] = ""
     logger.info("/start 完成: session=%s seed=%s, active_ws=%s",
-                sid, body.get("seed"), active_ws)
+                short_sid(sid), body.get("seed"), active_ws)
     return _json_response(connection, 200, body)
 
 
@@ -402,8 +404,8 @@ async def _process_request(
         req_sid = _header_value(headers, _SID_HEADER)
         if cur and req_sid and req_sid != cur:
             return _json_response(connection, 409, {
-                "error": f"session mismatch: 本实例正服务会话 {cur[:12]}…, "
-                         f"请求属于 {req_sid[:12]}…",
+                "error": f"session mismatch: 本实例正服务会话 {short_sid(cur)}, "
+                         f"请求属于 {short_sid(req_sid)}",
                 "hint": "HeaderField 亲和应避免跨会话路由; 请重试或重新 GET /start",
             })
     if not await _wait_browser_ready(cdp_port):

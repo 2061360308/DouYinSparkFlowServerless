@@ -24,6 +24,14 @@
 ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
+# ---- 镜像版本(单一事实来源: 仓库根目录的 VERSION 文件) ---------------------
+# 构建时注入: docker build --build-arg IMAGE_VERSION="$(cat VERSION)" ...
+# 未传则用 0.0.0-dev 兜底(标记为未正式版本化的构建)。
+ARG IMAGE_VERSION=0.0.0-dev
+LABEL org.opencontainers.image.title="cloakbrowser-serverless" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.description="keyless stealth Chromium(remote debugging) + websockets 代理, 适配阿里云函数计算(FC)"
+
 # ---- 可覆盖的构建参数 ------------------------------------------------------
 # CloakBrowser 免费版 Chromium 版本(v146 = wrapper 0.5.10 对应发布)
 ARG CLOAK_CHROMIUM_VERSION=146.0.7680.177.5
@@ -118,16 +126,19 @@ RUN pip install --no-cache-dir --index-url ${PIP_INDEX_URL} "websockets==17.1"
 
 # ---- 4. 本仓库代码: 编排器 + 浏览器启动 + 转发代理 --------------------------
 WORKDIR /app
+COPY VERSION ./VERSION
 COPY app/ ./app/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # 默认 headless, 不依赖 Xvfb(阿里云 FC 等平台友好);
 # 设 BROWSER_HEADLESS=false 走 headed(需 ENABLE_HEADED=true 构建)
+# IMAGE_VERSION 由构建参数透传为运行时 ENV, 供 app 读取并在 GET / 上报版本
 ENV PROXY_PORT=9000 \
     CDP_PORT=9222 \
     BROWSER_HEADLESS=true \
     DISPLAY=:99 \
+    IMAGE_VERSION=${IMAGE_VERSION} \
     CLOAKBROWSER_BINARY_PATH=/opt/cloakbrowser/chrome
 
 # FC 要求容器 HTTP 服务监听 0.0.0.0:9000

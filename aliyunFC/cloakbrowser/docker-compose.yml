@@ -1,0 +1,37 @@
+services:
+  cloakbrowser:
+    build:
+      context: .
+    image: cloakbrowser-ws-proxy:local
+    container_name: cloakbrowser
+    ports:
+      # 对外 WS/CDP 端口(容器内 python 代理监听 0.0.0.0:9000)
+      - "9000:9000"
+    environment:
+      BROWSER_HEADLESS: "true"        # 默认无头(无需 Xvfb); false 需 ENABLE_HEADED=true 重建
+      # BROWSER_READY_TIMEOUT: "90"   # GET /start 冷启动浏览器就绪上限(秒)
+      # WAIT_BROWSER_TIMEOUT: "180"   # 崩溃重启期间业务端点自动等待上限(秒)
+      # PROFILE_DIR: "/data/profile"  # 固定 seed 会话的持久化 profile 目录
+      # LOG_LEVEL: "INFO"
+      # 注: 浏览器指纹(seed/timezone/locale/proxy/extra_args)不走环境变量,
+      #     一律由客户端 GET /start 的 X-Browser-Cfg 头按请求下发。
+    volumes:
+      # 固定 seed 会话时挂载持久化 profile 保留登录态/cookie(配 PROFILE_DIR=/data/profile)
+      - cloak-profile:/data
+    restart: unless-stopped
+    healthcheck:
+      # 懒启动语义: GET / 恒 200 即代表服务存活(浏览器未创建也返回 200);
+      # 是否就绪看响应 body 的 browser_status 字段, 不作为存活判据。
+      # 勿用 /json/version: 浏览器未 /start 前该端点返回 503, 会被误判 unhealthy。
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  cloak-profile:

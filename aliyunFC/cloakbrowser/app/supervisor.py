@@ -33,7 +33,7 @@ import signal
 import sys
 
 from app.browser import BrowserManager
-from app.ws_proxy import env_int, serve as serve_proxy
+from app.ws_proxy import env_float, env_int, serve as serve_proxy
 
 logger = logging.getLogger("cbapp.supervisor")
 
@@ -48,13 +48,6 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if val in _HEADLESS_FALSE:
         return False
     return val in _HEADLESS_TRUE or default
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
 
 
 async def _browser_watchdog(gate: BrowserManager, stop: asyncio.Event) -> None:
@@ -87,7 +80,7 @@ async def main() -> None:
     cdp_port = env_int("CDP_PORT", 9222)
     proxy_port = env_int("PROXY_PORT", 9000)
     headless = _env_bool("BROWSER_HEADLESS", default=True)
-    ready_timeout = _env_float("BROWSER_READY_TIMEOUT", 90.0)
+    ready_timeout = env_float("BROWSER_READY_TIMEOUT", 90.0)
 
     logger.info(
         "配置: headless=%s, PROXY_PORT=%s, CDP_PORT=%s, "

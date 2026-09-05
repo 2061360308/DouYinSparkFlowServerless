@@ -42,6 +42,36 @@ BASE_CHROME_ARGS = [
 # 构建期预置二进制的默认路径(可用 CLOAKBROWSER_BINARY_PATH 覆盖)
 _DEFAULT_BINARY = "/opt/cloakbrowser/chrome"
 
+# extra_args 中禁止客户端覆盖的高危/关键参数前缀。这些由服务端固定管理:
+#   - --remote-debugging-*  客户端若覆盖可把 CDP 暴露到 0.0.0.0(绕过会话隔离)
+#     或改端口/管道搞坏代理转发;
+#   - --user-data-dir       覆盖后会话 profile 目录失控(串用/越权读写)。
+# 命中则丢弃并告警(见 normalize_cfg)。
+_BLOCKED_ARG_PREFIXES = frozenset({
+    "--remote-debugging-port",
+    "--remote-debugging-address",
+    "--remote-debugging-pipe",
+    "--remote-debugging-socket",
+    "--user-data-dir",
+})
+
+
+def _is_blocked_arg(arg: str) -> bool:
+    """判断单个启动参数是否属于禁止客户端覆盖的高危参数(兼容 --k=v / --k 两种写法)。"""
+    head = arg.split("=", 1)[0].strip().lower()
+    return head in _BLOCKED_ARG_PREFIXES
+
+
+def short_sid(sid: str | None, keep: int = 12) -> str:
+    """日志用: 截断会话 ID。sessionID 是可路由的能力凭据, 不宜整串落日志。"""
+    if not sid:
+        return "-"
+    return f"{sid[:keep]}…" if len(sid) > keep else sid
+
+
+# Chromium 异常退出(崩溃/被 kill)后在 profile 根目录残留的单例文件(通常为符号链接)
+_SINGLETON_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+
 
 class StealthBrowser:
     """单个 stealth Chromium 实例的生命周期管理。"""
@@ -115,12 +145,28 @@ class StealthBrowser:
         return args
 
     # ------------------------------------------------------------------
+    def _clear_singleton_locks(self) -> None:
+        """清理上次异常退出残留的 Chromium 单例锁文件。
+
+        Chromium 崩溃或被 kill 后, profile 根目录会残留 SingletonLock/
+        SingletonSocket/SingletonCookie。若沿用同一 --user-data-dir 重启,
+        偶发被判定 "profile 正被使用" 而拒启。start() 的幂等判断已确保执行到
+        这里时进程必不在运行, 故清理是安全的(临时 profile 为全新目录, 无影响)。
+        """
+        for name in _SINGLETON_FILES:
+            try:
+                (self.profile_dir / name).unlink(missing_ok=True)
+            except OSError as exc:  # 符号链接/权限等异常一律忽略, 不阻塞启动
+                logger.debug("清理残留单例文件 %s 失败(忽略): %s", name, exc)
+
+    # ------------------------------------------------------------------
     def start(self) -> subprocess.Popen:
         """启动浏览器进程(幂等: 已在运行则直接返回)。"""
         if self.process is not None and self.process.poll() is None:
             return self.process
 
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self._clear_singleton_locks()
         binary = self.binary_path()
 
         base = list(BASE_CHROME_ARGS)
@@ -212,12 +258,19 @@ def normalize_cfg(raw: dict) -> dict:
     extra = raw.get("extra_args") or raw.get("extra") or []
     if isinstance(extra, str):
         extra = extra.split()
+    safe_extra: list[str] = []
+    for a in extra:
+        s = str(a)
+        if _is_blocked_arg(s):
+            logger.warning("忽略客户端 extra_args 中的高危参数(服务端固定管理): %s", s)
+            continue
+        safe_extra.append(s)
     return {
         "seed": str(_opt("seed")) if _opt("seed") else None,
         "timezone": _opt("timezone"),
         "locale": _opt("locale"),
         "proxy": _opt("proxy"),
-        "extra_args": sorted(str(a) for a in extra),
+        "extra_args": sorted(safe_extra),
     }
 
 
@@ -294,16 +347,22 @@ class BrowserManager:
         cfg = normalize_cfg(cfg_raw)
         async with self._lock:
             if self._running() and self._sid == session_id:
-                logger.info("会话 %s 复用当前浏览器", session_id)
+                logger.info("会话 %s 复用当前浏览器", short_sid(session_id))
             elif self._running():
                 if active_ws > 0:
                     raise BrowserBusy(
                         "浏览器正被其他会话占用且配置不同, 无法切换")
                 logger.info("切换会话: %s -> %s (浏览器按新配置重建)",
-                            self._sid, session_id)
+                            short_sid(self._sid), short_sid(session_id))
                 await self._stop_locked()
                 self._start_locked(session_id, cfg)
             else:
+                # 无进程, 或旧进程已崩溃退出但对象残留: 先 stop 清理旧对象,
+                # 否则随机指纹的临时 profile 目录不会被回收(泄漏在 /tmp)。
+                if self._browser is not None:
+                    logger.info("清理已退出的旧浏览器实例后按会话 %s 重建",
+                                short_sid(session_id))
+                    await self._stop_locked()
                 self._start_locked(session_id, cfg)
             await self._wait_ready_locked()
             return self._describe()
