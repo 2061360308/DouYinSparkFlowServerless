@@ -33,24 +33,18 @@ main:
             cd aliyunFC/cloakbrowser
             IMAGE_VERSION="$(cat VERSION)"
             for tag in "$IMAGE_VERSION" latest; do
-              if docker manifest inspect "$ACR_IMAGE:$tag" | python3 -c '
-            import sys, json
-            m = json.load(sys.stdin)
-            mts = m.get("mediaType", "")
-            if "manifests" in m:
-                bad = [x for x in m["manifests"]
-                       if x.get("platform", {}).get("os") == "unknown"]
-                if bad:
-                    raise SystemExit("含 unknown 平台项(buildx provenance attestation)")
-                print("OK: 多平台 index, 无 attestation")
-            elif "manifest" in mts:
-                print("OK: 单平台 manifest")
-            else:
-                raise SystemExit("无法识别的媒体类型: " + str(mts))
-                '; then
-                echo "==> ${ACR_IMAGE}:$tag 格式正常"
-              else
-                echo "!! ${ACR_IMAGE}:$tag 被推成异常格式(index/attestation), 请检查是否有其它流程覆盖" >&2
+              echo "==> 校验 ${ACR_IMAGE}:$tag"
+              if ! out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)"; then
+                echo "!! 无法读取 ${ACR_IMAGE}:$tag 的 manifest(push 可能未生效)" >&2
                 exit 1
+              fi
+              if printf '%s' "$out" | grep -q '"manifests"'; then
+                if printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
+                  echo "!! ${ACR_IMAGE}:$tag 的 index 含 unknown 平台项(buildx provenance attestation), 请检查是否有其它流程覆盖" >&2
+                  exit 1
+                fi
+                echo "==> OK: 多平台 index, 无 attestation"
+              else
+                echo "==> OK: 单平台 manifest"
               fi
             done
