@@ -64,7 +64,7 @@ fi
 
 # ---- 初始化数据库(幂等: 建表 + 部分唯一索引 + 种子) ----
 echo "[start] 初始化数据库: $DATABASE_URL"
-"$PY" -m db
+"$PY" -m core.db
 
 # ---- 可选: 创建 / 重置管理员 ----
 #   CREATE_ADMIN=1                创建管理员(已存在则报错跳过)
@@ -75,7 +75,7 @@ if [ "${RESET_ADMIN:-0}" = "1" ] || [ "${CREATE_ADMIN:-0}" = "1" ]; then
   ADMIN_ARGS=("${ADMIN_USER:-admin}")
   [ -n "${ADMIN_PASSWORD:-}" ] && ADMIN_ARGS+=(--password "$ADMIN_PASSWORD")
   [ "${RESET_ADMIN:-0}" = "1" ] && ADMIN_ARGS+=(--reset)
-  "$PY" -m console create-admin "${ADMIN_ARGS[@]}" || true
+  "$PY" -m core create-admin "${ADMIN_ARGS[@]}" || true
 fi
 
 if [ "${CHECK_ONLY:-0}" = "1" ]; then
@@ -88,4 +88,4 @@ RELOAD_FLAG=""
 [ "$RELOAD" = "1" ] && RELOAD_FLAG="--reload"
 echo "[start] 启动 uvicorn -> http://$HOST:$PORT  (reload=$RELOAD)"
 echo "[start] 前端开发: cd panel && npm run dev (已代理 /api -> 127.0.0.1:$PORT)"
-exec "$PY" -m uvicorn api.index:app --host "$HOST" --port "$PORT" $RELOAD_FLAG
+exec "$PY" -m uvicorn server.index:app --host "$HOST" --port "$PORT" $RELOAD_FLAG

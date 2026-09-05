@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import unittest
 
-from browser import signer
+from core.browser import signer
 
 
 def _ref_sign(secret, method, path, headers, queries=None):

@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "builds": [
-    { "src": "api/index.py", "use": "@vercel/python" },
+    { "src": "server/index.py", "use": "@vercel/python" },
     {
       "src": "panel/package.json",
       "use": "@vercel/static-build",
@@ -9,7 +9,7 @@
     }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "api/index.py" },
+    { "src": "/api/(.*)", "dest": "server/index.py" },
     { "handle": "filesystem" },
     { "src": "/assets/(.*)", "dest": "panel/dist/assets/$1" },
     { "src": "/(.*\\.[a-zA-Z0-9]+)", "dest": "panel/dist/$1" },

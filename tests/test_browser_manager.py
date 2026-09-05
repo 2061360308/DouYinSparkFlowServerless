@@ -13,9 +13,9 @@ import unittest
 _TMP_DB = "test_browser_tmp.sqlite3"
 os.environ["DATABASE_URL"] = "sqlite://" + _TMP_DB
 
-import browser.local as local_mod  # noqa: E402
-from browser.manager import BrowserManager, is_docker_deployment  # noqa: E402
-from browser.manager import ERR_AT_CAPACITY  # noqa: E402
+import core.browser.local as local_mod  # noqa: E402
+from core.browser.manager import BrowserManager, is_docker_deployment  # noqa: E402
+from core.browser.manager import ERR_AT_CAPACITY  # noqa: E402
 
 
 # ---- 本地后端 mock：模拟浏览器进程注册表，无需真实 chrome ----
@@ -51,18 +51,18 @@ def _fake_stop(pid, cleanup_dir=None, timeout=6.0):
 
 
 async def _clear_rows():
-    from db import BrowserInstanceDB
+    from core.db import BrowserInstanceDB
     for r in await BrowserInstanceDB.list_all():
         await BrowserInstanceDB.delete(r["sessionid"])
 
 
 async def _count():
-    from db import BrowserInstanceDB
+    from core.db import BrowserInstanceDB
     return await BrowserInstanceDB.count()
 
 
 async def _set_meta(sessionid, **fields):
-    from db import BrowserInstanceDB
+    from core.db import BrowserInstanceDB
     rec = await BrowserInstanceDB.get(sessionid)
     meta = local_mod._decode_meta(rec["cfg"])
     meta.update(fields)
@@ -71,14 +71,14 @@ async def _set_meta(sessionid, **fields):
 
 
 async def _get_meta(sessionid):
-    from db import BrowserInstanceDB
+    from core.db import BrowserInstanceDB
     rec = await BrowserInstanceDB.get(sessionid)
     return local_mod._decode_meta(rec["cfg"]) if rec else None
 
 
 class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        from db.init_db import init_db
+        from core.db.init_db import init_db
         await init_db()
         await _clear_rows()
 
@@ -205,7 +205,7 @@ class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("DouyinSparkDocker", None)
         self.assertFalse(is_docker_deployment())
 
-        from db.system_config_db import SystemConfigDB
+        from core.db.system_config_db import SystemConfigDB
         await SystemConfigDB.set_many({
             "fc_function_url": "https://fn-xyz.cn-hangzhou.fcapp.run",
             "function_name": "DYSparkCloakBrowser",
@@ -300,7 +300,7 @@ class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
     # ------------------------------------------------------------------
     async def test_cloud_not_configured(self):
         os.environ.pop("DouyinSparkDocker", None)
-        from db.system_config_db import SystemConfigDB
+        from core.db.system_config_db import SystemConfigDB
         await SystemConfigDB.set_many({
             "fc_function_url": "", "function_name": "", "region": "cn-hangzhou",
             "platform_access_key_id": "", "platform_access_key_secret": "",
