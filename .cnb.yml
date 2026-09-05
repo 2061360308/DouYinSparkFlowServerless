@@ -1,50 +1,68 @@
+# ==============================================================================
+# CNB 流水线: cloakbrowser 镜像构建并推送 ACR
+#
+# 触发方式:
+#   1. push 到 main 且改动 aliyunFC/cloakbrowser/**  -> 自动构建推送
+#   2. 页面手动触发(代码仓库流水线页面按钮): 强制构建并推送 ACR
+#      (配 .cnb/web_trigger.yml, 忽略 ifModify, 总是执行)
+# ==============================================================================
+# 公共构建/推送/校验逻辑: push 与 web_trigger 两条流水线复用
+x-acr-build: &acr-build
+  services:
+    - docker
+  imports:
+    - https://cnb.cool/oilu/key/-/blob/main/secrets.yml
+  env:
+    ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
+    ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless
+  stages:
+    - name: 登录阿里云 ACR
+      script: echo "$ACR_PASSWORD" | docker login --username="$ACR_USERNAME" --password-stdin "$ACR_REGISTRY"
+    - name: 构建并推送镜像
+      script: |
+        cd aliyunFC/cloakbrowser
+        IMAGE_VERSION="$(cat VERSION)"
+        # 构建机 Docker 29.x 的 docker build 透传 buildx, 默认 --provenance=true
+        # 会把未知平台(unknown/unknown)的 SLSA attestation 附加进推送的 OCI index,
+        # 导致 ACR 控制台无法显示层/大小(0.1.0/latest 曾因此异常)。显式关闭:
+        docker build --provenance=false --sbom=false \
+          --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
+          -t "$ACR_IMAGE:$IMAGE_VERSION" .
+        docker tag "$ACR_IMAGE:$IMAGE_VERSION" "$ACR_IMAGE:latest"
+        docker push "$ACR_IMAGE:$IMAGE_VERSION"
+        docker push "$ACR_IMAGE:latest"
+    - name: 校验 ACR 上 tag 为单平台 manifest(防 attestation 复发)
+      script: |
+        set -euo pipefail
+        cd aliyunFC/cloakbrowser
+        IMAGE_VERSION="$(cat VERSION)"
+        for tag in "$IMAGE_VERSION" latest; do
+          echo "==> 校验 ${ACR_IMAGE}:$tag"
+          if ! out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)"; then
+            echo "!! 无法读取 ${ACR_IMAGE}:$tag 的 manifest(push 可能未生效)" >&2
+            exit 1
+          fi
+          if printf '%s' "$out" | grep -q '"manifests"'; then
+            if printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
+              echo "!! ${ACR_IMAGE}:$tag 的 index 含 unknown 平台项(buildx provenance attestation), 请检查是否有其它流程覆盖" >&2
+              exit 1
+            fi
+            echo "==> OK: 多平台 index, 无 attestation"
+          else
+            echo "==> OK: 单平台 manifest"
+          fi
+        done
+
 main:
   push:
     cloakbrowser:
       name: cloakbrowser 镜像构建并推送 ACR
-      services:
-        - docker
-      imports:
-        - https://cnb.cool/oilu/key/-/blob/main/secrets.yml
-      env:
-        ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
-        ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless
+      <<: *acr-build
       ifModify:
         - aliyunFC/cloakbrowser/**
-      stages:
-        - name: 登录阿里云 ACR
-          script: echo "$ACR_PASSWORD" | docker login --username="$ACR_USERNAME" --password-stdin "$ACR_REGISTRY"
-        - name: 构建并推送镜像
-          script: |
-            cd aliyunFC/cloakbrowser
-            IMAGE_VERSION="$(cat VERSION)"
-            # 构建机 Docker 29.x 的 docker build 透传 buildx, 默认 --provenance=true
-            # 会把未知平台(unknown/unknown)的 SLSA attestation 附加进推送的 OCI index,
-            # 导致 ACR 控制台无法显示层/大小(0.1.0/latest 曾因此异常)。显式关闭:
-            docker build --provenance=false --sbom=false \
-              --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
-              -t "$ACR_IMAGE:$IMAGE_VERSION" .
-            docker tag "$ACR_IMAGE:$IMAGE_VERSION" "$ACR_IMAGE:latest"
-            docker push "$ACR_IMAGE:$IMAGE_VERSION"
-            docker push "$ACR_IMAGE:latest"
-        - name: 校验 ACR 上 tag 为单平台 manifest(防 attestation 复发)
-          script: |
-            set -euo pipefail
-            cd aliyunFC/cloakbrowser
-            IMAGE_VERSION="$(cat VERSION)"
-            for tag in "$IMAGE_VERSION" latest; do
-              echo "==> 校验 ${ACR_IMAGE}:$tag"
-              if ! out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)"; then
-                echo "!! 无法读取 ${ACR_IMAGE}:$tag 的 manifest(push 可能未生效)" >&2
-                exit 1
-              fi
-              if printf '%s' "$out" | grep -q '"manifests"'; then
-                if printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
-                  echo "!! ${ACR_IMAGE}:$tag 的 index 含 unknown 平台项(buildx provenance attestation), 请检查是否有其它流程覆盖" >&2
-                  exit 1
-                fi
-                echo "==> OK: 多平台 index, 无 attestation"
-              else
-                echo "==> OK: 单平台 manifest"
-              fi
-            done
+
+$:
+  web_trigger_build_push:
+    cloakbrowser:
+      name: "手动触发: 强制构建并推送 ACR"
+      <<: *acr-build

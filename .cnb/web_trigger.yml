@@ -1,0 +1,7 @@
+# 页面手动触发按钮: 强制构建并推送 ACR(忽略 ifModify, 总是执行)
+branch:
+  - reg: ^main$
+    buttons:
+      - name: 强制构建并推送 ACR
+        description: 忽略 ifModify, 强制用 main 最新代码构建并推送到 ACR
+        event: web_trigger_build_push
