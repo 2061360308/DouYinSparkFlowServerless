@@ -37,6 +37,8 @@ BASE_CHROME_ARGS = [
     "--disable-background-networking",
     "--metrics-recording-only",
     "--ignore-gpu-blocklist",
+    "--disable-gpu",
+    "--enable-unsafe-swiftshader",
 ]
 
 # 构建期预置二进制的默认路径(可用 CLOAKBROWSER_BINARY_PATH 覆盖)

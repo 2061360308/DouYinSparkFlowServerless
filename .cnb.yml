@@ -22,15 +22,18 @@ x-acr-build: &acr-build
       script: |
         cd aliyunFC/cloakbrowser
         IMAGE_VERSION="$(cat VERSION)"
-        # 构建机 Docker 29.x 的 docker build 透传 buildx, 默认 --provenance=true
-        # 会把未知平台(unknown/unknown)的 SLSA attestation 附加进推送的 OCI index,
-        # 导致 ACR 控制台无法显示层/大小(0.1.0/latest 曾因此异常)。显式关闭:
-        docker build --provenance=false --sbom=false \
+        # 构建机 Docker 29.x 的 docker build 透传 buildx。两点必备:
+        #   1. --provenance=false --sbom=false: 禁止 buildx 默认附加 SLSA
+        #      attestation(会生成 unknown/unknown 平台的 OCI index, 0.1.0/latest
+        #      曾因此异常);
+        #   2. --output type=image,push=true,oci-mediatypes=false:
+        #      强制导出 docker schema2 manifest(而非 buildx 默认的 OCI),
+        #      ACR 个人版控制台只认 docker schema2, 否则层/大小显示空白。
+        docker buildx build --provenance=false --sbom=false \
           --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
-          -t "$ACR_IMAGE:$IMAGE_VERSION" .
-        docker tag "$ACR_IMAGE:$IMAGE_VERSION" "$ACR_IMAGE:latest"
-        docker push "$ACR_IMAGE:$IMAGE_VERSION"
-        docker push "$ACR_IMAGE:latest"
+          --output type=image,name="$ACR_IMAGE:$IMAGE_VERSION",push=true,oci-mediatypes=false \
+          --output type=image,name="$ACR_IMAGE:latest",push=true,oci-mediatypes=false \
+          .
     - name: 校验 ACR 上 tag 为单平台 manifest(防 attestation 复发)
       script: |
         set -euo pipefail
