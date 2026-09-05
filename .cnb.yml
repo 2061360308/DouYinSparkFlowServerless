@@ -18,7 +18,39 @@ main:
           script: |
             cd aliyunFC/cloakbrowser
             IMAGE_VERSION="$(cat VERSION)"
-            docker build --build-arg IMAGE_VERSION="$IMAGE_VERSION" -t "$ACR_IMAGE:$IMAGE_VERSION" .
+            # 构建机 Docker 29.x 的 docker build 透传 buildx, 默认 --provenance=true
+            # 会把未知平台(unknown/unknown)的 SLSA attestation 附加进推送的 OCI index,
+            # 导致 ACR 控制台无法显示层/大小(0.1.0/latest 曾因此异常)。显式关闭:
+            docker build --provenance=false --sbom=false \
+              --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
+              -t "$ACR_IMAGE:$IMAGE_VERSION" .
             docker tag "$ACR_IMAGE:$IMAGE_VERSION" "$ACR_IMAGE:latest"
             docker push "$ACR_IMAGE:$IMAGE_VERSION"
             docker push "$ACR_IMAGE:latest"
+        - name: 校验 ACR 上 tag 为单平台 manifest(防 attestation 复发)
+          script: |
+            set -euo pipefail
+            cd aliyunFC/cloakbrowser
+            IMAGE_VERSION="$(cat VERSION)"
+            for tag in "$IMAGE_VERSION" latest; do
+              if docker manifest inspect "$ACR_IMAGE:$tag" | python3 -c '
+            import sys, json
+            m = json.load(sys.stdin)
+            mts = m.get("mediaType", "")
+            if "manifests" in m:
+                bad = [x for x in m["manifests"]
+                       if x.get("platform", {}).get("os") == "unknown"]
+                if bad:
+                    raise SystemExit("含 unknown 平台项(buildx provenance attestation)")
+                print("OK: 多平台 index, 无 attestation")
+            elif "manifest" in mts:
+                print("OK: 单平台 manifest")
+            else:
+                raise SystemExit("无法识别的媒体类型: " + str(mts))
+                '; then
+                echo "==> ${ACR_IMAGE}:$tag 格式正常"
+              else
+                echo "!! ${ACR_IMAGE}:$tag 被推成异常格式(index/attestation), 请检查是否有其它流程覆盖" >&2
+                exit 1
+              fi
+            done
