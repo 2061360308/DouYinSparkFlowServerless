@@ -612,7 +612,7 @@ install_opencode() {
     else
         command -v curl >/dev/null 2>&1 || die "未找到 curl，无法安装 opencode"
         log "下载 opencode: $OPENCODE_INSTALL_URL ..."
-        if curl -fsSL "$OPENCODE_INSTALL_URL" | bash; then
+        if curl -fsSL https://opencode.ai/install | bash; then
             ok "opencode 已安装: $OPENCODE_BIN"
         else
             die "安装 opencode 失败: $OPENCODE_INSTALL_URL"
