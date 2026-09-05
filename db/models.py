@@ -34,7 +34,7 @@ TORTOISE_ORM = {
     "apps": {
         "models": {
             # 模型所在模块：基础表 + 控制台业务表（由 spark_console 迁移）
-            "models": ["db.models", "db.console_models"],
+            "models": ["db.models", "db.console_models", "task.models"],
             "default_connection": "default",
         }
     },

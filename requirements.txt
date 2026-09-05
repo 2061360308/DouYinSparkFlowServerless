@@ -33,3 +33,6 @@ alibabacloud-ram20150501>=1.0.0
 
 # aliyunFC/install/ros_client.py 调用 ROS 创建/查询资源栈需要
 alibabacloud-ros20190910>=1.0.0
+
+# task 模块云端调度：阿里云 EventBridge 管控 API（默认总线定时调度 → FC，免事件费）
+alibabacloud-eventbridge20200401>=2.0.1
