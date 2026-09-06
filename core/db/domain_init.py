@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from tortoise import connections
 
-from .domain_models import TaskQuotaPolicy
+from .models import TaskQuotaPolicy
 
 
 # 每条：索引名 -> (表, 列表达式, sqlite 的 WHERE, postgres 的 WHERE)

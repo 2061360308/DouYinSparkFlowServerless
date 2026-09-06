@@ -20,7 +20,7 @@ from typing import Any, Callable, TypeVar
 
 from tortoise import Tortoise
 
-from .models import TORTOISE_ORM
+from .config import TORTOISE_ORM
 
 _conn_lock = asyncio.Lock()  # 保护初始化过程，避免并发重复连接
 _db_ready = False  # 连接是否已建立

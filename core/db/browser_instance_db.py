@@ -15,9 +15,8 @@ from typing import Optional
 
 from tortoise.exceptions import IntegrityError
 
-from .models import BrowserInstance
-
 from .connection import with_db
+from .models import BrowserInstance
 
 # 返回给调用方的状态码
 OK = 0  # 操作成功

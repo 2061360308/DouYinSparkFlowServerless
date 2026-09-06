@@ -16,8 +16,9 @@ import asyncio
 
 from tortoise import Tortoise
 
+from .config import SYSTEM_CONFIG_KEYS, TORTOISE_ORM
 from .domain_init import create_console_indexes, seed_console_defaults
-from .models import SYSTEM_CONFIG_KEYS, SystemConfig, TORTOISE_ORM
+from .models import SystemConfig
 
 
 async def init_db() -> None:

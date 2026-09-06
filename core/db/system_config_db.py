@@ -24,8 +24,9 @@ SystemConfigDB 保留通用按键读写 get_value/set_value，
 
 from typing import Any, Optional
 
+from .config import SYSTEM_CONFIG_KEYS
 from .connection import with_db
-from .models import SYSTEM_CONFIG_KEYS, SystemConfig
+from .models import SystemConfig
 
 
 class _ConfigItemBase:

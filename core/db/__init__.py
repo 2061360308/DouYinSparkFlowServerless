@@ -8,14 +8,28 @@
     db/
     ├── __init__.py            # 统一导出，兼容 ``from core.db import XxxDB``
     ├── __main__.py            # CLI 入口：python -m core.db（初始化数据库）
+    ├── config.py              # TORTOISE_ORM + SYSTEM_CONFIG_KEYS + DATABASE_URL
     ├── connection.py          # 连接生命周期管理 + with_db 装饰器
-    ├── models.py              # 数据库模型 + TORTOISE_ORM + SYSTEM_CONFIG_KEYS
+    ├── models/                # 数据库模型包（按业务域拆分）
+    │   ├── __init__.py        # 统一重导出所有模型
+    │   ├── base.py            # uuid_string 等公共工具
+    │   ├── system.py          # SystemConfig
+    │   ├── browser.py         # BrowserInstance
+    │   ├── user.py            # User / WebSession / PendingRegistration / EmailVerificationRequest
+    │   ├── account.py         # DouyinAccount / DouyinAccountIdentity / DouyinConversation / DouyinContactIdentity
+    │   ├── login.py           # DouyinLoginSession / DouyinLoginAction / DouyinLoginInput / ScanStatus
+    │   ├── quota.py           # TaskQuotaPolicy / TaskQuotaGrant
+    │   ├── invite.py          # InviteCode / InviteCodeSecret
+    │   ├── task.py            # SparkTask / SparkTaskTargetIdentity / TaskRun
+    │   ├── audit.py           # AuditEvent / RateLimitAttempt
+    │   └── scheduled.py       # ScheduledTask
     ├── init_db.py             # 初始化逻辑（init_db()），供 __main__ 与编程调用
+    ├── domain_init.py         # 部分唯一索引 + 默认种子数据
     ├── browser_instance_db.py # browser_instance 表操作类 BrowserInstanceDB
     └── system_config_db.py    # system_config 表操作类 SystemConfigDB / 配置项类
 
-新增表时：在 models.py 定义模型，在 db/ 下新建 ``<table>_db.py``，
-仿照现有操作类提供读写方法即可。
+新增表时：在 ``db/models/`` 下合适业务域模块中定义模型， Tortoise 会自动注册；
+如需新增表操作类，在 db/ 下新建 ``<table>_db.py`` 仿照现有类提供读写方法。
 
 用法示例：
 
@@ -46,7 +60,7 @@ from .browser_instance_db import (
     OK,
 )
 from .connection import with_db
-from .models import SYSTEM_CONFIG_KEYS
+from .config import SYSTEM_CONFIG_KEYS
 from .system_config_db import (
     BrowserConcurrency,
     FcFunctionUrl,
