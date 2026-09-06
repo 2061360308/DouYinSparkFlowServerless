@@ -24,8 +24,8 @@ from tortoise import Tortoise, connections
 from core.security import PasswordService
 from core.services import Conflict, ValidationError
 from core.services.users import UserService
-from core.db.domain_models import User, WebSession
-from core.db.models import TORTOISE_ORM
+from core.db.config import TORTOISE_ORM
+from core.db.models import User, WebSession
 
 
 async def _create_admin(username: str, password: str | None, reset: bool) -> None:

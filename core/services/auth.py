@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from core.db.domain_models import User, WebSession
+from core.db.models import User, WebSession
 from core.security import PasswordService, SessionService
 from core.services import ValidationError
 from core.timeutil import to_naive_utc, utcnow

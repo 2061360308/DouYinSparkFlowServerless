@@ -8,7 +8,7 @@ from __future__ import annotations
 import secrets
 import string
 
-from core.db.domain_models import DouyinAccount, SparkTask, User, WebSession
+from core.db.models import DouyinAccount, SparkTask, User, WebSession
 from core.security import PasswordService
 from core.services import Conflict, NotFound, ValidationError
 from core.services.audit import AuditService

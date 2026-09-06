@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from tortoise.exceptions import IntegrityError
 
-from core.db.domain_models import (
+from core.db.models import (
     DouyinContactIdentity,
     SparkTask,
     SparkTaskTargetIdentity,

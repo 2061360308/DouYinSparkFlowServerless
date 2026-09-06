@@ -14,13 +14,12 @@ from zoneinfo import ZoneInfo
 from tortoise.exceptions import IntegrityError
 from tortoise.expressions import Q
 
-from core.db.domain_models import (
+from core.db.models import (
     SparkTask,
     TaskQuotaGrant,
     TaskQuotaPolicy,
     TaskRun,
     User,
-    UserTaskQuota,
 )
 from core.services import NotFound, ValidationError
 from core.services.audit import AuditService
@@ -69,8 +68,7 @@ class TaskCapacityService:
         if await TaskQuotaGrant.filter(user_id=user.id).exists():
             return None
         policy = await self.policy()
-        legacy = await UserTaskQuota.get_or_none(user_id=user.id)
-        amount = legacy.task_limit if legacy is not None else policy.default_amount
+        amount = policy.default_amount
         current = _aware(effective_at or utcnow())
         created_at = _aware(user.created_at) if user.created_at else current
         starts_at = current if use_current_policy else min(created_at, current)

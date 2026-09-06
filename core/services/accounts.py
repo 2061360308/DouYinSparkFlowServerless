@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from core.db.domain_models import DouyinAccount, SparkTask
+from core.db.models import DouyinAccount, SparkTask
 from core.crypto import CookieCipher
 from core.services import NotFound, ValidationError
 from core.services.audit import AuditService

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.db.domain_models import AuditEvent
+from core.db.models import AuditEvent
 
 
 class AuditService:

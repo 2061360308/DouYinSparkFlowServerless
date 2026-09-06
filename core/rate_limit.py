@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from core.db.connection import with_db
-from core.db.domain_models import RateLimitAttempt
+from core.db.models import RateLimitAttempt
 
 
 def _utc_now() -> datetime:

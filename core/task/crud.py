@@ -12,8 +12,9 @@ from zoneinfo import ZoneInfo
 
 from core.db.connection import with_db
 
+from core.db.models import ScheduledTask
+
 from . import cron_utils
-from .models import ScheduledTask
 
 # 状态码
 OK = 0
