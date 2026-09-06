@@ -68,3 +68,10 @@ export async function deployStack(request: DeployRequest): Promise<DeployHandle>
 export async function getDeployStatus(_stackId: string): Promise<DeployStatus> {
   return http.post<DeployStatus>('/api/install/refresh')
 }
+
+export const repairInstallCredentials = (credentials: InstallCredentials, confirmation: string) =>
+  http.post<DeployStatus>('/api/install/credentials', { credentials, confirmation })
+export const cleanupInstallation = (confirmation: string) =>
+  http.post<DeployStatus>('/api/install/cleanup', { confirmation })
+export const resetInstallation = (confirmation: string) =>
+  http.post<{ ok: boolean }>('/api/install/reset', { confirmation })

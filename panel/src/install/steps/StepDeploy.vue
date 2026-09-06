@@ -24,6 +24,7 @@ async function poll(): Promise<void> {
     const status = await getDeployStatus(store.deploy.stackId)
     if (!active) return
     store.deploy.status = status.status
+    store.deploy.rawStatus = status.rawStatus ?? status.status
     store.deploy.events = status.events
     store.deploy.statusReason = status.statusReason ?? ''
     if (status.status === 'CREATE_COMPLETE') {
@@ -85,8 +86,9 @@ onUnmounted(() => {
     <div class="head">
       <n-spin v-if="store.deploy.phase === 'deploying'" :size="20" />
       <span class="title">
-        <template v-if="store.deploy.phase === 'deploying'">正在创建资源栈…</template>
+        <template v-if="store.deploy.phase === 'deploying'">{{ store.deploy.rawStatus.startsWith('DELETE') ? '正在清理旧资源…' : '正在创建资源栈…' }}</template>
         <template v-else-if="store.deploy.phase === 'success'">资源栈创建完成</template>
+        <template v-else-if="store.deploy.rawStatus === 'DELETE_COMPLETE'">旧资源已清理</template>
         <template v-else-if="store.deploy.phase === 'error'">部署需要处理</template>
         <template v-else>准备部署…</template>
       </span>
@@ -97,7 +99,7 @@ onUnmounted(() => {
     </div>
 
     <div class="events" role="log" aria-live="polite">
-      <div v-if="store.deploy.events.length === 0" class="event empty">资源栈状态：{{ store.deploy.status || '提交中' }}。创建可能需要数分钟，可刷新页面恢复查询。</div>
+      <div v-if="store.deploy.events.length === 0" class="event empty">资源栈状态：{{ store.deploy.rawStatus || store.deploy.status || '提交中' }}。{{ store.deploy.phase === 'deploying' ? '处理可能需要数分钟，可刷新页面恢复查询。' : '请根据下方提示继续操作。' }}</div>
       <div v-for="ev in store.deploy.events" :key="ev.logicalResourceId" class="event">
         <span class="ok">✓</span>
         <span class="res">{{ ev.logicalResourceId }}</span>
@@ -105,7 +107,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <n-alert v-if="store.deploy.phase === 'error'" type="error" title="部署或状态查询未完成">
+    <n-alert v-if="store.deploy.phase === 'error' && store.deploy.rawStatus !== 'DELETE_COMPLETE'" type="error" title="部署或状态查询未完成">
       {{ store.deploy.error }}
     </n-alert>
   </div>

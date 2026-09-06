@@ -3,10 +3,10 @@
 按 ``target_env`` 分派：
 - ``linux``   → 写入 crontab（每任务一段带 ``CRON_TZ=Asia/Shanghai`` 的标记块）。
 - ``windows`` → 生成计划任务 XML 并 ``schtasks /Create /XML``（choice A）。
-- ``fc``      → 阿里云 EventBridge 默认总线定时调度 → FC（需凭证，留待联调）。
+- ``fc``      → 阿里云 EventBridge 定时调度 → FC（控制台显式传入安装配置）。
 
 设计：``build_*``（纯函数，产出待写入的构件，可单测）+ ``register_*/unregister_*``
-（执行副作用）。触发器以 ``task_id`` 命名/标记，保证幂等（先删后建）。
+（执行副作用）。触发器以 ``task_id`` 命名/标记；云端更新优先，不存在才创建。
 唤醒后统一执行 ``python -m core.task.run --task-id <task_id>``。
 """
 
@@ -152,14 +152,14 @@ def _eb_bus_name() -> str:
     return os.getenv("SPARK_EVENTBRIDGE_BUS", "default")
 
 
-def _eb_client():
+def _eb_client(config: dict | None = None):
     """构造 EventBridge OpenAPI 客户端（凭证走环境变量）。"""
     from alibabacloud_eventbridge20200401.client import Client
     from alibabacloud_tea_openapi.models import Config
 
-    region = os.getenv("SPARK_ALIYUN_REGION", "cn-hangzhou")
-    ak = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID") or os.getenv("SPARK_ALIYUN_AK", "")
-    sk = os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET") or os.getenv("SPARK_ALIYUN_SK", "")
+    region = config['region'] if config is not None else os.getenv("SPARK_ALIYUN_REGION", "cn-hangzhou")
+    ak = config['platform_access_key_id'] if config is not None else os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID") or os.getenv("SPARK_ALIYUN_AK", "")
+    sk = config['platform_access_key_secret'] if config is not None else os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET") or os.getenv("SPARK_ALIYUN_SK", "")
     if not ak or not sk:
         raise RuntimeError(
             "EventBridge 需要凭证：请设 ALIBABA_CLOUD_ACCESS_KEY_ID/ACCESS_KEY_SECRET"
@@ -167,30 +167,51 @@ def _eb_client():
     return Client(Config(
         access_key_id=ak, access_key_secret=sk,
         endpoint=f"eventbridge.{region}.aliyuncs.com",
+        connect_timeout=3000, read_timeout=10000,
     ))
 
 
-def build_fc_schedule(task: dict) -> dict:
+def build_fc_schedule(task: dict, *, bus_name: str | None = None, time_zone: str | None = None) -> dict:
     """构造 EventBridge 定时事件源参数（纯函数，便于单测）。"""
+    cron_utils.validate(task['cron_expr'])
     return {
         "event_source_name": task["task_id"],
-        "event_bus_name": _eb_bus_name(),
-        "schedule": cron_utils.to_six_field(task["cron_expr"]),   # 阿里云 6 段 cron
-        "time_zone": os.getenv("SPARK_EVENTBRIDGE_TZ", "GMT+08:00"),
+        "event_bus_name": bus_name if bus_name is not None else _eb_bus_name(),
+        # EventBridge uses seconds + standard five fields, not Quartz weekday numbering.
+        "schedule": '0 ' + ' '.join(task['cron_expr'].split()),
+        "time_zone": time_zone or os.getenv("SPARK_EVENTBRIDGE_TZ", "GMT+08:00"),
         "user_data": json.dumps({"task_id": task["task_id"]}, ensure_ascii=False),
     }
 
 
-def register_fc(task: dict, *, client=None) -> None:
-    """为任务创建/更新定时事件源(name=task_id)；幂等(先删后建)。"""
+class EventSourceError(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__('EventBridge request failed')
+
+
+def _eb_result(response):
+    body = response.body
+    if body.success is not True:
+        raise EventSourceError(body.code)
+
+
+def register_fc(task: dict, *, client=None, bus_name: str | None = None, time_zone: str | None = None) -> None:
+    """先更新；仅在事件源确实不存在时创建，绝不吞掉权限或网络错误。"""
     from alibabacloud_eventbridge20200401 import models as eb
 
-    params = build_fc_schedule(task)
+    params = build_fc_schedule(task, bus_name=bus_name, time_zone=time_zone)
     client = client or _eb_client()
     try:
-        unregister_fc(task["task_id"], client=client)
-    except Exception:  # noqa: BLE001  不存在则忽略
-        pass
+        _eb_result(client.update_event_source(eb.UpdateEventSourceRequest(
+            event_source_name=params['event_source_name'], event_bus_name=params['event_bus_name'],
+            source_scheduled_event_parameters=eb.UpdateEventSourceRequestSourceScheduledEventParameters(
+                schedule=params['schedule'], time_zone=params['time_zone'], user_data=params['user_data']),
+        )))
+        return
+    except Exception as error:
+        if getattr(error, 'code', None) != 'EventSourceNotExist':
+            raise
     scheduled = eb.CreateEventSourceRequestSourceScheduledEventParameters(
         schedule=params["schedule"],
         time_zone=params["time_zone"],
@@ -201,19 +222,23 @@ def register_fc(task: dict, *, client=None) -> None:
         event_bus_name=params["event_bus_name"],
         source_scheduled_event_parameters=scheduled,
     )
-    client.create_event_source(request)
+    _eb_result(client.create_event_source(request))
 
 
-def unregister_fc(task_id: str, *, client=None) -> None:
+def unregister_fc(task_id: str, *, client=None, bus_name: str | None = None) -> None:
     """删除任务对应的定时事件源(name=task_id)。"""
     from alibabacloud_eventbridge20200401 import models as eb
 
     client = client or _eb_client()
     request = eb.DeleteEventSourceRequest(
         event_source_name=task_id,
-        event_bus_name=_eb_bus_name(),
+        event_bus_name=bus_name if bus_name is not None else _eb_bus_name(),
     )
-    client.delete_event_source(request)
+    try:
+        _eb_result(client.delete_event_source(request))
+    except Exception as error:
+        if getattr(error, 'code', None) != 'EventSourceNotExist':
+            raise
 
 
 # ---------------------------------------------------------------------------

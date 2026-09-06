@@ -60,6 +60,17 @@ async def get_scheduled_task(task_id: str) -> dict:
     task = await ScheduledTaskDB.get(task_id)
     if task is None:
         raise HTTPException(404, "scheduled task not found")
+    if task['event_category'] == 'douyin_spark':
+        from core.services.task_scheduling import schedule_status
+        spark = await SparkTask.get_or_none(id=(task.get('params') or {}).get('spark_task_id'))
+        if not spark or not spark.enabled or not spark.douyin_account_id:
+            task['enabled'] = False
+        elif (await schedule_status(spark))['schedule_state'] != 'synced':
+            task['enabled'] = False
+        else:
+            owner = await spark.owner_user
+            if owner.status != 'active':
+                task['enabled'] = False
     return task
 
 
@@ -85,6 +96,8 @@ async def get_spark_task(spark_task_id: str) -> dict:
     task = await SparkTask.get_or_none(id=spark_task_id)
     if task is None:
         raise HTTPException(404, "spark task not found")
+    if not task.enabled:
+        raise HTTPException(409, 'task is paused')
     binding = await SparkTaskTargetIdentity.get_or_none(task_id=task.id)
     return {
         "id": task.id,

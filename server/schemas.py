@@ -68,6 +68,8 @@ class QuotaSummary(BaseModel):
 
 
 class TaskItem(BaseModel):
+    schedule_state: str = 'pending'
+    schedule_error: str = ''
     id: str
     account_id: str | None
     target_name: str
@@ -75,7 +77,7 @@ class TaskItem(BaseModel):
     send_time: str
     message_template: str
     enabled: bool
-    next_run_at: str | None
+    next_run_at: str | None = None
 
 
 class Availability(BaseModel):

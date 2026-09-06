@@ -39,6 +39,15 @@ def _extract_task_id(raw: str) -> str | None:
             data = {}
     if isinstance(data, dict) and data.get("task_id"):
         return str(data["task_id"])
+    if isinstance(data, dict):
+        user_data = data.get('UserData')
+        if isinstance(user_data, str):
+            try:
+                user_data = json.loads(user_data)
+            except json.JSONDecodeError:
+                return None
+        if isinstance(user_data, dict) and user_data.get('task_id'):
+            return str(user_data['task_id'])
     return None
 
 

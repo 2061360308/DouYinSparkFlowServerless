@@ -71,9 +71,13 @@ class AccountService:
     async def delete_owned(self, owner_id: str, account_id: str) -> None:
         account = await self.get_owned(owner_id, account_id)
         # 解绑其关联任务并停用
+        task_ids = await SparkTask.filter(douyin_account_id=account.id).values_list('id', flat=True)
         await SparkTask.filter(douyin_account_id=account.id).update(
-            enabled=False, douyin_account_id=None
+            enabled=False, douyin_account_id=None, next_run_at=None
         )
+        from core.services.task_scheduling import sync_task
+        for task_id in task_ids:
+            await sync_task(task_id)
         await account.delete()
         await self.audit.write(owner_id, "account.deleted", "douyin_account", account_id)
 

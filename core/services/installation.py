@@ -39,6 +39,8 @@ OUTPUT_CONFIG = {
     'TaskTriggerUrlInternet': 'task_function_url', 'TaskFunctionName': 'task_function_name',
     'EventBusName': 'eventbridge_bus_name',
 }
+FAILED_STATES = {'CREATE_FAILED', 'ROLLBACK_COMPLETE', 'ROLLBACK_FAILED',
+                 'CREATE_ROLLBACK_COMPLETE', 'CREATE_ROLLBACK_FAILED', 'DELETE_FAILED'}
 
 
 def _https_url(value: str) -> bool:
@@ -93,7 +95,7 @@ def _client(payload: dict):
 
 def _view(row: Installation) -> dict:
     state = row.status
-    if state == 'SUBMITTING' or state.endswith('_IN_PROGRESS') or state == 'REVIEW_IN_PROGRESS':
+    if state in ('SUBMITTING', 'DELETE_REQUESTED') or state.endswith('_IN_PROGRESS'):
         state = 'CREATE_IN_PROGRESS'
     elif state != 'CREATE_COMPLETE':
         state = 'CREATE_FAILED'
@@ -173,13 +175,90 @@ class InstallationService:
             raise ValidationError('创建请求未确认成功，请恢复查询或重试同一部署；不会生成新的请求令牌') from None
         if not stack_id:
             raise ValidationError('ROS 未返回资源栈 ID，请恢复查询')
-        await Installation.filter(id=1, stack_id='').update(stack_id=stack_id, status='CREATE_IN_PROGRESS')
+        await Installation.filter(id=1, client_token=row.client_token, stack_id='', status='SUBMITTING').update(stack_id=stack_id, status='CREATE_IN_PROGRESS')
+
+    @with_db
+    async def repair_credentials(self, credentials: dict, confirmation: str) -> dict:
+        async with in_transaction():
+            row = await Installation.filter(id=1).select_for_update().first()
+            if not row:
+                raise NotFound('尚未提交部署')
+            if confirmation != (row.stack_id or 'DouyinSpark'):
+                raise ValidationError('请输入当前资源栈 ID；未取得 ID 时请输入 DouyinSpark')
+            if row.status not in FAILED_STATES | {'SUBMITTING', 'DELETE_REQUESTED'}:
+                raise Conflict('仅失败或请求未确认的部署可更换凭据')
+            if not all(str(credentials.get(key, '')).strip() for key in ('accessKeyId', 'accessKeySecret')):
+                raise ValidationError('请输入完整的云访问凭据')
+            payload = _payload(row, self.settings)
+            if row.stack_id:
+                try:
+                    await asyncio.to_thread(_client({**payload, 'credentials': credentials}).get_stack_status, row.stack_id)
+                except Exception:
+                    raise ValidationError('新凭据无法访问原资源栈，请确认属于同一云账号且权限完整') from None
+            payload['credentials'] = credentials
+            nonce = os.urandom(12)
+            row.nonce, row.ciphertext = nonce, AESGCM(self.settings.cookie_key).encrypt(nonce, json.dumps(payload).encode(), AAD)
+            await row.save(update_fields=['nonce', 'ciphertext'])
+            return _view(row)
+
+    async def _delete_failed(self, row: Installation) -> None:
+        payload = _payload(row, self.settings)
+        client = _client(payload)
+        try:
+            info = await asyncio.to_thread(client.get_stack_status, row.stack_id)
+            state = info.get('Status')
+            if state in {'DELETE_COMPLETE', 'DELETE_IN_PROGRESS'}:
+                row.status = state
+            elif state in FAILED_STATES:
+                await asyncio.to_thread(client.delete_stack, row.stack_id)
+                row.status = 'DELETE_IN_PROGRESS'
+            else:
+                if isinstance(state, str):
+                    # Completion must go through refresh's output/config transaction.
+                    recovered = 'CREATE_IN_PROGRESS' if state == 'CREATE_COMPLETE' else state
+                    await Installation.filter(id=1, client_token=row.client_token).update(status=recovered)
+                raise Conflict('资源栈正在运行或创建，禁止按失败资源清理')
+        except Conflict:
+            raise
+        except Exception:
+            raise ValidationError('清理请求未确认，请恢复查询；不会重建资源栈') from None
+        await Installation.filter(id=1, client_token=row.client_token).update(status=row.status)
+
+    @with_db
+    async def cleanup(self, confirmation: str) -> dict:
+        async with in_transaction():
+            row = await Installation.filter(id=1).select_for_update().first()
+            if not row or not row.stack_id:
+                raise Conflict('尚未取得资源栈 ID，请先修正凭据并恢复查询')
+            if confirmation != row.stack_id:
+                raise ValidationError('请输入要清理的完整资源栈 ID')
+            if row.status not in FAILED_STATES | {'DELETE_REQUESTED', 'DELETE_IN_PROGRESS'}:
+                raise Conflict('只有失败的资源栈可以清理')
+            row.status = 'DELETE_REQUESTED'
+            await row.save(update_fields=['status'])
+        # Persist intent before the external effect, so a lost response can recover.
+        await self._delete_failed(row)
+        return _view(row)
+
+    @with_db
+    async def reset(self, confirmation: str) -> dict:
+        async with in_transaction():
+            row = await Installation.filter(id=1).select_for_update().first()
+            if not row or row.status != 'DELETE_COMPLETE':
+                raise Conflict('必须确认旧资源栈删除完成后才能重新配置')
+            if confirmation != row.stack_id:
+                raise ValidationError('资源栈 ID 不匹配')
+            await row.delete()
+        return {'ok': True}
 
     @with_db
     async def refresh(self) -> dict:
         row = await Installation.get_or_none(id=1)
         if row is None:
             raise NotFound('尚未提交部署')
+        if row.status == 'DELETE_REQUESTED':
+            await self._delete_failed(row)
+            return _view(row)
         if not row.stack_id:
             await self._submit(row)
             row = await Installation.get(id=1)
@@ -197,7 +276,11 @@ class InstallationService:
         outputs = {item['OutputKey']: item.get('OutputValue', '') for item in info.get('Outputs', []) if 'OutputKey' in item}
         # Both config and completion commit together. A delayed query cannot undo completion.
         async with in_transaction():
-            current = await Installation.filter(id=1).select_for_update().get()
+            current = await Installation.filter(id=1).select_for_update().first()
+            if not current or current.client_token != row.client_token:
+                raise Conflict('安装记录已变更，请刷新页面')
+            if current.status.startswith('DELETE') and not state.startswith('DELETE'):
+                return _view(current)
             if current.status == 'CREATE_COMPLETE':
                 state, outputs = 'CREATE_COMPLETE', current.outputs
             if state == 'CREATE_COMPLETE':

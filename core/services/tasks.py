@@ -21,6 +21,7 @@ from core.services import Conflict, NotFound, ValidationError
 from core.services.accounts import AccountService
 from core.services.audit import AuditService
 from core.services.task_capacity import TaskCapacityService
+from core.services.task_scheduling import sync_task, delete_task
 
 
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -99,6 +100,7 @@ class TaskService:
         except IntegrityError as error:
             raise Conflict("相同账号、好友和时间的启用任务已存在") from error
         await self.audit.write(owner_id, "task.created", "spark_task", task.id)
+        await sync_task(task.id)
         return task
 
     async def set_enabled_owned(self, owner_id: str, task_id: str, enabled: bool) -> SparkTask:
@@ -115,13 +117,15 @@ class TaskService:
             await self.capacity.assert_can_enable(owner)
             await self.capacity.assert_slot_available(task.send_time, task.id)
         task.enabled = enabled
+        task.next_run_at = _next_run_at(task.send_time) if enabled else None
         try:
-            await task.save(update_fields=["enabled", "updated_at"])
+            await task.save(update_fields=["enabled", "next_run_at", "updated_at"])
         except IntegrityError as error:
             raise Conflict("相同账号、好友和时间的启用任务已存在") from error
         await self.audit.write(
             actor_id, "task.enabled" if enabled else "task.disabled", "spark_task", task.id
         )
+        await sync_task(task.id)
         return task
 
     async def update_owned(
@@ -158,9 +162,10 @@ class TaskService:
         elif binding is not None:
             await binding.delete()
         await self.audit.write(owner_id, "task.updated", "spark_task", task.id)
+        await sync_task(task.id)
         return task
 
     async def delete_owned(self, owner_id: str, task_id: str) -> None:
         task = await self.get_owned(owner_id, task_id)
-        await task.delete()
+        await delete_task(task.id)
         await self.audit.write(owner_id, "task.deleted", "spark_task", task_id)

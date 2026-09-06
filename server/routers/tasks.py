@@ -10,6 +10,7 @@ from core.services.accounts import AccountService
 from core.services.audit import AuditService
 from core.services.task_capacity import TaskCapacityService
 from core.services.tasks import TaskService
+from core.services.task_scheduling import sync_task, schedule_status
 from core.db.models import SparkTask, SparkTaskTargetIdentity, User
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -30,6 +31,7 @@ def _iso(value) -> str | None:
 async def _task_dict(task: SparkTask) -> dict:
     binding = await SparkTaskTargetIdentity.get_or_none(task_id=task.id)
     return {
+        **await schedule_status(task),
         "id": task.id,
         "account_id": task.douyin_account_id,
         "target_name": task.target_name,
@@ -136,3 +138,11 @@ async def delete_task(
 ) -> dict:
     await _service(services).delete_owned(ctx.user.id, task_id)
     return {"ok": True}
+
+
+@router.post('/{task_id}/sync', response_model=TaskItem)
+async def retry_schedule(task_id: str, ctx: AuthContext = Depends(user_csrf), services: Services = Depends(get_services)):
+    task = await _service(services).get_owned(ctx.user.id, task_id)
+    await sync_task(task.id)
+    await task.refresh_from_db()
+    return await _task_dict(task)

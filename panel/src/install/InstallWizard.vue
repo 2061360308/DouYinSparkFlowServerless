@@ -10,6 +10,7 @@ import StepConfig from './steps/StepConfig.vue'
 import StepReview from './steps/StepReview.vue'
 import StepDeploy from './steps/StepDeploy.vue'
 import StepResult from './steps/StepResult.vue'
+import StepRecovery from './steps/StepRecovery.vue'
 
 const store = createInstallStore()
 
@@ -37,6 +38,7 @@ async function restore(): Promise<void> {
       const deployment = state.deployment
       store.deploy.stackId = deployment.stackId
       store.deploy.status = deployment.status
+      store.deploy.rawStatus = deployment.rawStatus ?? deployment.status
       store.deploy.outputs = deployment.outputs ?? null
       store.deploy.phase = state.installed ? 'success' : 'deploying'
       current.value = state.installed ? 5 : 4
@@ -95,14 +97,21 @@ function viewResult(): void {
 
 <template>
   <div class="wizard-shell">
+    <aside class="install-context">
+      <span class="eyebrow">DOUYIN SPARK / SETUP</span>
+      <h1>准备好，<br>让续火按时发生。</h1>
+      <p>连接云账号，配置运行资源。部署中断后，可以从这里接着完成。</p>
+      <div class="region-label">杭州 · 每日任务 · 云端运行</div>
+    </aside>
     <n-card class="wizard-card" :bordered="true">
       <template #header>
-        <div class="wizard-title">cloakbrowser 引导安装</div>
+        <div class="wizard-title">{{ current < 4 ? '配置你的运行环境' : current === 5 ? '运行环境已就绪' : '部署与恢复' }}</div>
       </template>
 
       <n-steps :current="current" :status="stepsStatus" size="small" class="steps">
         <n-step v-for="title in STEP_TITLES" :key="title" :title="title" />
       </n-steps>
+      <div class="mobile-step">步骤 {{ current }} / {{ STEP_TITLES.length }} · {{ STEP_TITLES[current - 1] }}</div>
 
       <n-spin v-if="loading" />
       <n-alert v-else-if="loadError" type="error" title="安装状态查询失败">
@@ -119,6 +128,7 @@ function viewResult(): void {
         <StepReview v-else-if="current === 3" />
         <StepDeploy v-else-if="current === 4" :key="deployKey" />
         <StepResult v-else-if="current === 5" />
+        <StepRecovery v-if="current === 4 && store.deploy.phase === 'error'" @restored="restore" />
       </div>
 
       <template #footer>
@@ -157,8 +167,20 @@ function viewResult(): void {
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  gap: 40px;
   padding: 40px 20px;
   box-sizing: border-box;
+}
+.install-context { max-width: 270px; padding-top: 32px; }
+.eyebrow { font: 11px Consolas, monospace; letter-spacing: .14em; color: #b76a31; }
+.install-context h1 { font-size: 34px; line-height: 1.45; letter-spacing: -.04em; margin: 22px 0; }
+.install-context p { line-height: 1.9; opacity: .65; }
+.region-label { border-left: 3px solid #b76a31; padding-left: 12px; margin-top: 36px; font-size: 12px; opacity: .75; }
+@media (max-width: 1000px) {
+  .wizard-shell { flex-direction: column; align-items: center; gap: 24px; padding: 24px 16px; }
+  .install-context { max-width: 840px; width: 100%; padding-top: 0; }
+  .install-context h1 { font-size: 24px; margin: 10px 0; }
+  .install-context h1 br, .region-label { display: none; }
 }
 .wizard-card {
   width: 100%;
@@ -170,6 +192,11 @@ function viewResult(): void {
 }
 .steps {
   margin-bottom: 8px;
+}
+.mobile-step { display: none; }
+@media (max-width: 600px) {
+  .steps { display: none; }
+  .mobile-step { display: block; font-size: 13px; opacity: .65; }
 }
 .step-body {
   padding: 24px 4px 8px;

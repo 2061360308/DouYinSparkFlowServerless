@@ -51,6 +51,8 @@ export interface QuotaSummary {
 }
 
 export interface TaskItem {
+  schedule_state: 'pending' | 'synced' | 'error'
+  schedule_error: string
   id: string
   account_id: string | null
   target_name: string
@@ -158,6 +160,7 @@ export const taskApi = {
   create: (body: TaskBody) => http.post<TaskItem>('/api/tasks', body),
   update: (id: string, body: TaskBody) => http.put<TaskItem>(`/api/tasks/${id}`, body),
   toggle: (id: string) => http.post<TaskItem>(`/api/tasks/${id}/toggle`),
+  sync: (id: string) => http.post<TaskItem>(`/api/tasks/${id}/sync`),
   remove: (id: string) => http.del<{ ok: boolean }>(`/api/tasks/${id}`),
   availability: (send_time: string, exclude_task_id = '') =>
     http.get<Availability>(

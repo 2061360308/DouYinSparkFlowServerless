@@ -16,6 +16,7 @@ export interface DeployRuntime {
   phase: DeployPhase
   stackId: string
   status: StackStatus | ''
+  rawStatus: string
   statusReason: string
   events: StackEvent[]
   outputs: StackOutputs | null
@@ -42,6 +43,7 @@ function freshDeploy(): DeployRuntime {
     phase: 'idle',
     stackId: '',
     status: '',
+    rawStatus: '',
     statusReason: '',
     events: [],
     outputs: null,
