@@ -35,6 +35,7 @@
 #
 #   OPENCODE_BIN=~/.opencode/bin/opencode     opencode 可执行文件路径
 #   OPENCODE_INSTALL_URL=https://opencode.ai/install
+#                                             （失败时自动经 GH_MIRROR 直接下载二进制）
 #   JUSTWOKER_BASE_URL=https://api.justwoker.icu/v1
 #   JUSTWOKER_API_KEY=sk-...                  JustWoker API Key（默认内置常用 Key）
 #   OPENCODE_TUI_CONFIG=~/.config/opencode/tui.json
@@ -606,6 +607,74 @@ setup_proxy() {
 # ---------------------------------------------------------------------------
 # 6) opencode + JustWoker 模型（Anthropic 兼容 API）
 # ---------------------------------------------------------------------------
+# 解析 opencode 最新版本号：优先 api.github.com，失败则经 GH_MIRROR 走 GitHub 版本页
+opencode_latest_version() {
+    local v
+    v="$(curl -fsSL --max-time 15 https://api.github.com/repos/anomalyco/opencode/releases/latest 2>/dev/null \
+         | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' || true)"
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+    if [ -n "$GH_MIRROR" ]; then
+        v="$(curl -fsSL --max-time 20 "${GH_MIRROR%/}/https://github.com/anomalyco/opencode/releases/latest" 2>/dev/null \
+             | grep -oE 'anomalyco/opencode/releases/tag/v[0-9]+\.[0-9]+\.[0-9]+' | head -n1 | sed 's#.*/v##' || true)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+    fi
+    return 1
+}
+
+# 经 GH_MIRROR 直接下载 opencode 二进制（官方安装脚本依赖 api.github.com，默认被网络屏蔽）
+install_opencode_binary() { # $1=version
+    local ver="$1"
+    local os arch target url murl tmp tar_dir bin
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    case "$os" in
+        darwin) os="darwin" ;;
+        linux)  os="linux" ;;
+        *)      return 1 ;;
+    esac
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64)        arch="x64" ;;
+        aarch64|arm64) arch="arm64" ;;
+    esac
+    case "$os-$arch" in
+        linux-x64|linux-arm64|darwin-x64|darwin-arm64) ;;
+        *) return 1 ;;
+    esac
+    target="$os-$arch"
+    if [ "$os" = linux ] && ! grep -qwi avx2 /proc/cpuinfo 2>/dev/null; then
+        target="${target}-baseline"
+    fi
+    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+        target="${target}-musl"
+    fi
+
+    url="https://github.com/anomalyco/opencode/releases/download/v${ver}/opencode-${target}.tar.gz"
+    murl="$url"
+    [ -n "$GH_MIRROR" ] && murl="${GH_MIRROR%/}/$url"
+
+    tmp="$(mktemp)"
+    tar_dir="$(mktemp -d)"
+    log "下载 opencode v${ver}（$target）: $murl"
+    if ! fetch_url "$murl" "$tmp"; then
+        rm -f "$tmp"; rm -rf "$tar_dir"
+        return 1
+    fi
+    if ! tar -xzf "$tmp" -C "$tar_dir" 2>/dev/null; then
+        rm -f "$tmp"; rm -rf "$tar_dir"
+        return 1
+    fi
+    rm -f "$tmp"
+    bin="$(find "$tar_dir" -type f -name opencode -print -quit)"
+    if [ -z "$bin" ]; then
+        rm -rf "$tar_dir"
+        return 1
+    fi
+    mkdir -p "$(dirname "$OPENCODE_BIN")"
+    install -m 0755 "$bin" "$OPENCODE_BIN"
+    rm -rf "$tar_dir"
+    return 0
+}
+
 install_opencode() {
     if [ -x "$OPENCODE_BIN" ]; then
         local ver
@@ -614,10 +683,16 @@ install_opencode() {
     else
         command -v curl >/dev/null 2>&1 || die "未找到 curl，无法安装 opencode"
         log "下载 opencode: $OPENCODE_INSTALL_URL ..."
-        if curl -fsSL https://opencode.ai/install | bash; then
+        if curl -fsSL "$OPENCODE_INSTALL_URL" | bash; then
             ok "opencode 已安装: $OPENCODE_BIN"
         else
-            die "安装 opencode 失败: $OPENCODE_INSTALL_URL"
+            warn "官方安装脚本失败（依赖 api.github.com），尝试经 GH_MIRROR 直接下载 ..."
+            local v
+            if v="$(opencode_latest_version)" && install_opencode_binary "$v"; then
+                ok "opencode v$v 已安装（经 GH_MIRROR）: $OPENCODE_BIN"
+            else
+                die "安装 opencode 失败: $OPENCODE_INSTALL_URL"
+            fi
         fi
     fi
     [ -x "$OPENCODE_BIN" ] || die "opencode 安装后未找到可执行文件: $OPENCODE_BIN"

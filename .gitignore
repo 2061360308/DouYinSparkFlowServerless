@@ -22,6 +22,10 @@ db.sqlite3-*
 # 浏览器运行产物（Chromium 二进制等，不入库）
 /cloakbrowser/
 
+# 登录态等运行产物（本机保留，不入库）
+/localD/
+/logs/
+
 # Terraform 本地文件（状态/插件/缓存，不入库）
 *.tfstate
 *.tfstate.backup
