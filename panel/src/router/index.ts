@@ -49,6 +49,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/admin/AdminUserQuotaView.vue'),
         meta: { requiresAdmin: true },
       },
+      {
+        path: 'admin/system-settings',
+        name: 'admin-system-settings',
+        component: () => import('../views/admin/SystemSettingsView.vue'),
+        meta: { requiresAdmin: true },
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },

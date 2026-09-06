@@ -57,10 +57,10 @@ const columns: DataTableColumns<TaskItem> = [
   {
     title: '时间',
     key: 'send_time',
-    width: 84,
+    width: 70,
     render: (row) => h('b', { style: 'color:#aa3bff' }, row.send_time),
   },
-  { title: '好友', key: 'target_name', width: 140 },
+  { title: '好友', key: 'target_name', width: 120 },
   {
     title: '消息',
     key: 'message_template',
@@ -69,7 +69,7 @@ const columns: DataTableColumns<TaskItem> = [
   {
     title: '状态',
     key: 'enabled',
-    width: 90,
+    width: 80,
     render: (row) =>
       h(NTag, { type: row.enabled ? 'success' : 'default', bordered: false, size: 'small' },
         { default: () => (row.enabled ? '启用' : '暂停') }),
@@ -77,9 +77,9 @@ const columns: DataTableColumns<TaskItem> = [
   {
     title: '操作',
     key: 'actions',
-    width: 190,
+    width: 150,
     render: (row) =>
-      h(NSpace, { size: 6 }, {
+      h(NSpace, { size: 4 }, {
         default: () => [
           h(NButton, { size: 'small', tertiary: true, onClick: () => openEdit(row) }, { default: () => '编辑' }),
           h(NButton, { size: 'small', tertiary: true, type: row.enabled ? 'warning' : 'success', onClick: () => toggle(row) },
@@ -206,7 +206,7 @@ onMounted(load)
         <n-button type="primary" :disabled="accounts.length === 0" @click="openCreate">新建任务</n-button>
       </n-space>
     </template>
-    <n-data-table :columns="columns" :data="tasks" :loading="loading" :bordered="false" />
+    <n-data-table :columns="columns" :data="tasks" :loading="loading" :bordered="false" scroll-x="auto" />
     <n-text v-if="accounts.length === 0" depth="3" class="tip">请先在「抖音账号」添加账号后再创建任务。</n-text>
   </n-card>
 
@@ -214,7 +214,7 @@ onMounted(load)
     v-model:show="showEdit"
     preset="card"
     :title="editingId ? '编辑任务' : '新建任务'"
-    style="max-width: 560px"
+    :style="{ maxWidth: 'min(560px, calc(100vw - 32px))', width: '90vw' }"
   >
     <n-form :model="form" label-placement="top">
       <n-form-item label="抖音账号">

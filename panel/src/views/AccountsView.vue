@@ -118,10 +118,10 @@ onMounted(load)
     <template #header-extra>
       <n-button type="primary" @click="openAdd">添加账号</n-button>
     </template>
-    <n-data-table :columns="columns" :data="rows" :loading="loading" :bordered="false" />
+    <n-data-table :columns="columns" :data="rows" :loading="loading" :bordered="false" scroll-x="auto" />
   </n-card>
 
-  <n-modal v-model:show="showAdd" preset="card" title="添加抖音账号" style="max-width: 560px">
+  <n-modal v-model:show="showAdd" preset="card" title="添加抖音账号" :style="{ maxWidth: 'min(560px, calc(100vw - 32px))', width: '90vw' }">
     <n-form :model="form" label-placement="top">
       <n-form-item label="账号名称">
         <n-input v-model:value="form.display_name" placeholder="用于区分的名称" />

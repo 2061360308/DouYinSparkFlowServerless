@@ -70,12 +70,12 @@ async function submit() {
 
 <style scoped>
 .login-page {
-  position: relative;
-  min-height: 100vh;
+  position: fixed;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: auto;
 }
 .backdrop {
   position: absolute;

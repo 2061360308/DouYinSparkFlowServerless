@@ -15,8 +15,8 @@ const columns = ref<DataTableColumns<RunItem>>([])
 
 function buildColumns() {
   const cols: DataTableColumns<RunItem> = [
-    { title: '计划时间', key: 'scheduled_for', width: 180, render: (r) => formatDateTime(r.scheduled_for) },
-    { title: '好友', key: 'target_name', render: (r) => r.target_name ?? '—' },
+    { title: '计划时间', key: 'scheduled_for', width: 150, render: (r) => formatDateTime(r.scheduled_for) },
+    { title: '好友', key: 'target_name', width: 120, render: (r) => r.target_name ?? '—' },
   ]
   if (showOwner.value) {
     cols.push({ title: '所属用户', key: 'owner_username', width: 120, render: (r) => r.owner_username ?? '—' })
@@ -67,6 +67,7 @@ onMounted(() => load(1))
       :loading="loading"
       :bordered="false"
       :pagination="pagination"
+      scroll-x="auto"
       @update:page="onPage"
     />
   </n-card>

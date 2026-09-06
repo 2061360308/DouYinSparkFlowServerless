@@ -4,6 +4,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import {
   NAvatar,
   NButton,
+  NDrawer,
   NDropdown,
   NIcon,
   NLayout,
@@ -20,20 +21,25 @@ import {
   GridOutline,
   KeyOutline,
   LogOutOutline,
+  MenuOutline,
   PeopleOutline,
   PersonCircleOutline,
   QrCodeOutline,
   ReceiptOutline,
+  SettingsOutline,
 } from '@vicons/ionicons5'
 
 import { useAuth } from '../composables/useAuth'
+import { useBreakpoint } from '../composables/useBreakpoint'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const { state, logout } = useAuth()
+const { isMobile } = useBreakpoint()
 
 const collapsed = ref(false)
+const drawerVisible = ref(false)
 
 function renderIcon(icon: Component) {
   return () => h(NIcon, null, { default: () => h(icon) })
@@ -49,13 +55,14 @@ const menuOptions = computed<MenuOption[]>(() => {
   ]
   if (state.isAdmin) {
     base.push({ label: '用户管理', key: 'admin-users', icon: renderIcon(PeopleOutline) })
+    base.push({ label: '系统设置', key: 'admin-system-settings', icon: renderIcon(SettingsOutline) })
   }
   return base
 })
 
 const activeKey = computed(() => {
   const name = route.name?.toString() ?? ''
-  if (name.startsWith('admin')) return 'admin-users'
+  if (name === 'admin-user-quota') return 'admin-users'
   return name
 })
 
@@ -67,12 +74,18 @@ const TITLES: Record<string, string> = {
   runs: '执行记录',
   'admin-users': '用户管理',
   'admin-user-quota': '任务额度',
+  'admin-system-settings': '系统设置',
   'change-password': '修改密码',
 }
 const pageTitle = computed(() => TITLES[route.name?.toString() ?? ''] ?? 'DouyinSpark 控制台')
 
 function onMenu(key: string) {
+  drawerVisible.value = false
   router.push({ name: key })
+}
+
+function openDrawer() {
+  drawerVisible.value = true
 }
 
 const userOptions = [
@@ -97,7 +110,9 @@ onMounted(() => {
 
 <template>
   <n-layout has-sider class="shell">
+    <!-- 桌面端固定侧边栏 -->
     <n-layout-sider
+      v-if="!isMobile"
       bordered
       collapse-mode="width"
       :collapsed-width="64"
@@ -122,7 +137,14 @@ onMounted(() => {
 
     <n-layout>
       <n-layout-header bordered class="header">
-        <div class="title">{{ pageTitle }}</div>
+        <div class="header-left">
+          <n-button v-if="isMobile" quaternary class="menu-btn" @click="openDrawer">
+            <template #icon>
+              <n-icon :size="22" :component="MenuOutline" />
+            </template>
+          </n-button>
+          <div class="title">{{ pageTitle }}</div>
+        </div>
         <n-dropdown trigger="click" :options="userOptions" @select="onUserSelect">
           <n-button quaternary class="user-btn">
             <template #icon>
@@ -130,8 +152,8 @@ onMounted(() => {
                 {{ (state.user?.username ?? '?').slice(0, 1).toUpperCase() }}
               </n-avatar>
             </template>
-            <span class="user-name">{{ state.user?.username }}</span>
-            <n-text v-if="state.isAdmin" depth="3" class="role-tag">管理员</n-text>
+            <span v-if="!isMobile" class="user-name">{{ state.user?.username }}</span>
+            <n-text v-if="!isMobile && state.isAdmin" depth="3" class="role-tag">管理员</n-text>
           </n-button>
         </n-dropdown>
       </n-layout-header>
@@ -142,12 +164,35 @@ onMounted(() => {
         </div>
       </n-layout-content>
     </n-layout>
+
+    <!-- 移动端抽屉菜单 -->
+    <n-drawer
+      v-model:show="drawerVisible"
+      :width="240"
+      placement="left"
+      :auto-focus="false"
+      class="drawer-menu"
+    >
+      <div class="drawer-brand">
+        <n-icon :size="22" :component="FlameOutline" class="brand-icon" />
+        <span class="brand-text">DouyinSpark</span>
+      </div>
+      <n-menu
+        :value="activeKey"
+        :collapsed="false"
+        :collapsed-width="64"
+        :options="menuOptions"
+        @update:value="onMenu"
+      />
+    </n-drawer>
   </n-layout>
 </template>
 
 <style scoped>
 .shell {
-  height: 100vh;
+  /* 固定占满整个视口，不依赖父元素高度链，避免地址栏变化导致抖动 */
+  position: fixed;
+  inset: 0;
 }
 .brand {
   height: 56px;
@@ -158,6 +203,17 @@ onMounted(() => {
   font-weight: 700;
   font-size: 17px;
   color: var(--n-text-color, #333);
+}
+.drawer-brand {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--n-text-color, #333);
+  border-bottom: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.24));
 }
 .brand-icon {
   color: #aa3bff;
@@ -171,6 +227,14 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.menu-btn {
+  padding: 0 6px;
 }
 .title {
   font-size: 16px;
@@ -188,7 +252,7 @@ onMounted(() => {
   font-size: 12px;
 }
 .content {
-  height: calc(100vh - 56px);
+  height: calc(100% - 56px);
   overflow: auto;
   background: rgba(128, 128, 128, 0.05);
 }
@@ -196,5 +260,10 @@ onMounted(() => {
   max-width: 1080px;
   margin: 0 auto;
   padding: 24px 20px 40px;
+}
+@media (max-width: 768px) {
+  .content-inner {
+    padding: 16px 12px 24px;
+  }
 }
 </style>

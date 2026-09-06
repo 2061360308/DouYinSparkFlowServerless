@@ -148,4 +148,15 @@ onMounted(load)
   font-size: 12px;
   opacity: 0.6;
 }
+@media (max-width: 640px) {
+  .row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .row-side {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
 </style>

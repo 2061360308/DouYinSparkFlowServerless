@@ -55,14 +55,14 @@ const STATUS: Record<string, { label: string; type: 'default' | 'success' | 'war
 }
 
 const grantColumns: DataTableColumns<QuotaGrant> = [
-  { title: '名称', key: 'label' },
-  { title: '额度', key: 'amount', width: 70 },
-  { title: '开始', key: 'starts_at', width: 170, render: (g) => formatDateTime(g.starts_at) },
-  { title: '到期', key: 'expires_at', width: 170, render: (g) => (g.expires_at ? formatDateTime(g.expires_at) : '永久') },
+  { title: '名称', key: 'label', width: 120 },
+  { title: '额度', key: 'amount', width: 65 },
+  { title: '开始', key: 'starts_at', width: 150, render: (g) => formatDateTime(g.starts_at) },
+  { title: '到期', key: 'expires_at', width: 150, render: (g) => (g.expires_at ? formatDateTime(g.expires_at) : '永久') },
   {
     title: '状态',
     key: 'status',
-    width: 100,
+    width: 85,
     render: (g) => {
       const meta = STATUS[g.status] ?? STATUS.expired
       return h(NTag, { size: 'small', bordered: false, type: meta.type }, { default: () => meta.label })
@@ -71,7 +71,7 @@ const grantColumns: DataTableColumns<QuotaGrant> = [
   {
     title: '操作',
     key: 'actions',
-    width: 90,
+    width: 80,
     render: (g) =>
       g.status === 'revoked'
         ? '—'
@@ -170,14 +170,14 @@ onMounted(load)
     </n-grid>
 
     <n-card title="快速设置任务上限" size="small">
-      <n-space align="center">
-        <n-input-number v-model:value="limitInput" :min="1" :max="100" />
+      <n-space class="limit-space" align="center">
+        <n-input-number v-model:value="limitInput" :min="1" :max="100" style="width: 160px" />
         <n-button type="primary" :loading="savingLimit" @click="saveLimit">保存</n-button>
       </n-space>
     </n-card>
 
     <n-card title="额度授予">
-      <n-data-table :columns="grantColumns" :data="quota?.grants ?? []" :loading="loading" :bordered="false" />
+      <n-data-table :columns="grantColumns" :data="quota?.grants ?? []" :loading="loading" :bordered="false" scroll-x="auto" />
     </n-card>
 
     <n-card title="新增额度" size="small">
@@ -227,5 +227,14 @@ onMounted(load)
 .add-actions {
   margin-top: 14px;
   text-align: right;
+}
+.limit-space :deep(.n-space) {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .limit-space :deep(.n-space) {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

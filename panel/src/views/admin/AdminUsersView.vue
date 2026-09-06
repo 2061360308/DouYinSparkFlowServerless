@@ -62,19 +62,19 @@ const columns: DataTableColumns<AdminUserRow> = [
       h(NTag, { size: 'small', bordered: false, type: r.status === 'active' ? 'success' : 'error' },
         { default: () => (r.status === 'active' ? '正常' : '停用') }),
   },
-  { title: '启用/额度', key: 'quota', width: 100, render: quotaText },
+  { title: '启用/额度', key: 'quota', width: 95, render: quotaText },
   {
     title: '操作',
     key: 'actions',
-    width: 260,
+    width: 220,
     render: (row) => {
       if (row.role === 'admin') {
         return h(NButton, { size: 'small', tertiary: true, onClick: () => resetPassword(row) }, { default: () => '重置密码' })
       }
-      return h(NSpace, { size: 6 }, {
+      return h(NSpace, { size: 4 }, {
         default: () => [
           h(NButton, { size: 'small', tertiary: true, onClick: () => router.push({ name: 'admin-user-quota', params: { id: row.id } }) }, { default: () => '额度' }),
-          h(NButton, { size: 'small', tertiary: true, onClick: () => resetPassword(row) }, { default: () => '重置密码' }),
+          h(NButton, { size: 'small', tertiary: true, onClick: () => resetPassword(row) }, { default: () => '重置' }),
           h(NButton, { size: 'small', tertiary: true, type: row.status === 'active' ? 'warning' : 'success', onClick: () => toggle(row) }, { default: () => (row.status === 'active' ? '停用' : '启用') }),
           h(NButton, { size: 'small', tertiary: true, type: 'error', onClick: () => openDelete(row) }, { default: () => '删除' }),
         ],
@@ -184,11 +184,12 @@ onMounted(() => load(1))
       :loading="loading"
       :bordered="false"
       :pagination="pagination"
+      scroll-x="auto"
       @update:page="load"
     />
   </n-card>
 
-  <n-modal v-model:show="showCreate" preset="card" title="新建用户" style="max-width: 420px">
+  <n-modal v-model:show="showCreate" preset="card" title="新建用户" :style="{ maxWidth: 'min(420px, calc(100vw - 32px))', width: '90vw' }">
     <n-form :model="{ newUsername }" label-placement="top">
       <n-form-item label="用户名（3–32 位字母/数字/_/-）">
         <n-input v-model:value="newUsername" placeholder="用户名" @keyup.enter="createUser" />
@@ -202,7 +203,7 @@ onMounted(() => load(1))
     </template>
   </n-modal>
 
-  <n-modal v-model:show="showDelete" preset="card" title="删除用户" style="max-width: 440px">
+  <n-modal v-model:show="showDelete" preset="card" title="删除用户" :style="{ maxWidth: 'min(440px, calc(100vw - 32px))', width: '90vw' }">
     <n-text>此操作不可恢复，将删除该用户及其账号、任务。请输入用户名</n-text>
     <n-text strong> {{ deleteTarget?.username }} </n-text>
     <n-text>以确认：</n-text>
@@ -224,7 +225,13 @@ onMounted(() => load(1))
 
 <style scoped>
 .search {
+  width: 100%;
   max-width: 320px;
   margin-bottom: 14px;
+}
+@media (max-width: 768px) {
+  .search {
+    max-width: 100%;
+  }
 }
 </style>
