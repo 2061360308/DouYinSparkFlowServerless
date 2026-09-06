@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 
 from server.deps import AuthContext, Services, current_user, get_services
+from server.schemas import DashboardData, PlatformStatus
 from core.services.accounts import AccountService
 from core.services.task_capacity import TaskCapacityService
-from core.db.domain_models import SparkTask, TaskRun
+from core.db.models import SparkTask, TaskRun
 
 router = APIRouter(tags=["dashboard"])
 
@@ -37,13 +38,13 @@ async def _platform_status(user_id: str, is_admin: bool) -> dict:
     }
 
 
-@router.get("/api/platform-status")
+@router.get("/api/platform-status", response_model=PlatformStatus)
 async def platform_status(ctx: AuthContext = Depends(current_user)) -> dict:
     await TaskCapacityService().reconcile_user(ctx.user.id)
     return await _platform_status(ctx.user.id, ctx.user.role == "admin")
 
 
-@router.get("/api/dashboard")
+@router.get("/api/dashboard", response_model=DashboardData)
 async def dashboard(
     ctx: AuthContext = Depends(current_user),
     services: Services = Depends(get_services),

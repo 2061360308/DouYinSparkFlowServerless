@@ -12,7 +12,7 @@ from core.config import Settings
 from core.crypto import CookieCipher
 from core.security import PasswordService, SessionService
 from core.services.auth import AuthService
-from core.db.domain_models import User, WebSession
+from core.db.models import User, WebSession
 
 SESSION_COOKIE = "spark_session"
 

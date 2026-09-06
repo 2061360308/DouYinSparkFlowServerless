@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from server.deps import AuthContext, current_user
-from core.db.domain_models import TaskRun, User
+from server.schemas import ListRunsResponse
+from core.db.models import TaskRun, User
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -14,7 +15,7 @@ def _iso(value) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-@router.get("")
+@router.get("", response_model=ListRunsResponse)
 async def list_runs(
     page: int = 1,
     ctx: AuthContext = Depends(current_user),

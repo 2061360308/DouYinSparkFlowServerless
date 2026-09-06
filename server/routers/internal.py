@@ -13,9 +13,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.deps import Services, get_services, require_service
+from server.schemas import (
+    AccountCookiesResponse,
+    BrowserAcquireResponse,
+    OkResponse,
+    ScheduledTaskDetail,
+    TaskItem,
+    WriteRunResponse,
+)
 from core.task.crud import ScheduledTaskDB
 from core.timeutil import utcnow
-from core.db.domain_models import (
+from core.db.models import (
     DouyinAccount,
     SparkTask,
     SparkTaskTargetIdentity,
@@ -47,7 +55,7 @@ def _iso(value) -> str | None:
 
 
 # ---- 计划任务(通用调度层) ----
-@router.get("/scheduled-tasks/{task_id}")
+@router.get("/scheduled-tasks/{task_id}", response_model=ScheduledTaskDetail)
 async def get_scheduled_task(task_id: str) -> dict:
     task = await ScheduledTaskDB.get(task_id)
     if task is None:
@@ -55,7 +63,7 @@ async def get_scheduled_task(task_id: str) -> dict:
     return task
 
 
-@router.post("/scheduled-tasks/{task_id}/started")
+@router.post("/scheduled-tasks/{task_id}/started", response_model=OkResponse)
 async def scheduled_task_started(task_id: str) -> dict:
     resp = await ScheduledTaskDB.mark_started(task_id)
     if not resp["ok"]:
@@ -63,7 +71,7 @@ async def scheduled_task_started(task_id: str) -> dict:
     return {"ok": True}
 
 
-@router.post("/scheduled-tasks/{task_id}/result")
+@router.post("/scheduled-tasks/{task_id}/result", response_model=OkResponse)
 async def scheduled_task_result(task_id: str, body: ResultBody) -> dict:
     resp = await ScheduledTaskDB.mark_result(task_id, ok=body.ok)
     if not resp["ok"]:
@@ -72,7 +80,7 @@ async def scheduled_task_result(task_id: str, body: ResultBody) -> dict:
 
 
 # ---- 续火业务任务 ----
-@router.get("/spark-tasks/{spark_task_id}")
+@router.get("/spark-tasks/{spark_task_id}", response_model=TaskItem)
 async def get_spark_task(spark_task_id: str) -> dict:
     task = await SparkTask.get_or_none(id=spark_task_id)
     if task is None:
@@ -90,7 +98,7 @@ async def get_spark_task(spark_task_id: str) -> dict:
     }
 
 
-@router.get("/accounts/{account_id}/cookies")
+@router.get("/accounts/{account_id}/cookies", response_model=AccountCookiesResponse)
 async def get_account_cookies(
     account_id: str,
     services: Services = Depends(get_services),
@@ -109,7 +117,7 @@ async def get_account_cookies(
     }
 
 
-@router.post("/spark-tasks/{spark_task_id}/runs")
+@router.post("/spark-tasks/{spark_task_id}/runs", response_model=WriteRunResponse)
 async def write_run(spark_task_id: str, body: RunBody) -> dict:
     task = await SparkTask.get_or_none(id=spark_task_id)
     if task is None:
@@ -136,7 +144,7 @@ async def write_run(spark_task_id: str, body: RunBody) -> dict:
 
 
 # ---- 远程浏览器申请(经 BrowserManager, 集中并发计数) ----
-@router.post("/browser/acquire")
+@router.post("/browser/acquire", response_model=BrowserAcquireResponse)
 async def acquire_browser(body: AcquireBody) -> dict:
     from core.browser import BrowserManager
 

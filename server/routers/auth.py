@@ -11,6 +11,7 @@ from server.deps import (
     get_services,
     user_csrf_allow_change,
 )
+from server.schemas import LoginResponse, MeResponse, OkResponse
 from core.services.users import UserService
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -45,7 +46,7 @@ def _set_session_cookie(response: Response, raw: str, secure: bool) -> None:
     )
 
 
-@router.post("/login")
+@router.post("/login", response_model=LoginResponse)
 async def login(
     body: LoginBody,
     response: Response,
@@ -64,7 +65,7 @@ async def login(
     }
 
 
-@router.get("/me")
+@router.get("/me", response_model=MeResponse)
 async def me(ctx: AuthContext = Depends(current_allow_change)) -> dict:
     return {
         "user": _user_dict(ctx.user),
@@ -74,7 +75,7 @@ async def me(ctx: AuthContext = Depends(current_allow_change)) -> dict:
     }
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=OkResponse)
 async def logout(
     response: Response,
     ctx: AuthContext = Depends(user_csrf_allow_change),
@@ -85,7 +86,7 @@ async def logout(
     return {"ok": True}
 
 
-@router.post("/change-password")
+@router.post("/change-password", response_model=OkResponse)
 async def change_password(
     body: ChangePasswordBody,
     ctx: AuthContext = Depends(user_csrf_allow_change),

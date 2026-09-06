@@ -7,10 +7,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.deps import AuthContext, Services, admin_csrf, get_services, require_admin
+from server.schemas import (
+    AdminUserQuotaResponse,
+    AdminUserRow,
+    ListUsersResponse,
+    OkResponse,
+    QuotaPolicy,
+    SystemConfigResponse,
+    SystemConfigUpdateBody,
+    TemporaryPasswordResponse,
+)
 from core.services import ValidationError
 from core.services.task_capacity import TaskCapacityService
 from core.services.users import UserService
-from core.db.domain_models import User
+from core.db import SystemConfigDB
+from core.db.config import SYSTEM_CONFIG_KEYS
+from core.db.models import User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -70,7 +82,7 @@ class TaskLimitBody(BaseModel):
     task_limit: int
 
 
-@router.get("/users")
+@router.get("/users", response_model=ListUsersResponse)
 async def list_users(
     q: str = "",
     page: int = 1,
@@ -99,7 +111,7 @@ async def list_users(
     }
 
 
-@router.post("/users")
+@router.post("/users", response_model=TemporaryPasswordResponse)
 async def create_user(
     body: CreateUserBody,
     ctx: AuthContext = Depends(admin_csrf),
@@ -109,7 +121,7 @@ async def create_user(
     return {"temporary_password": temporary}
 
 
-@router.post("/users/{user_id}/toggle")
+@router.post("/users/{user_id}/toggle", response_model=OkResponse)
 async def toggle_user(
     user_id: str,
     ctx: AuthContext = Depends(admin_csrf),
@@ -124,7 +136,7 @@ async def toggle_user(
     return {"ok": True}
 
 
-@router.post("/users/{user_id}/reset-password")
+@router.post("/users/{user_id}/reset-password", response_model=TemporaryPasswordResponse)
 async def reset_password(
     user_id: str,
     ctx: AuthContext = Depends(admin_csrf),
@@ -134,7 +146,7 @@ async def reset_password(
     return {"temporary_password": temporary}
 
 
-@router.delete("/users/{user_id}")
+@router.delete("/users/{user_id}", response_model=OkResponse)
 async def delete_user(
     user_id: str,
     body: DeleteUserBody,
@@ -145,7 +157,7 @@ async def delete_user(
     return {"ok": True}
 
 
-@router.get("/quota-policy")
+@router.get("/quota-policy", response_model=QuotaPolicy)
 async def get_quota_policy(ctx: AuthContext = Depends(require_admin)) -> dict:
     policy = await TaskCapacityService().policy()
     return {
@@ -155,7 +167,7 @@ async def get_quota_policy(ctx: AuthContext = Depends(require_admin)) -> dict:
     }
 
 
-@router.put("/quota-policy")
+@router.put("/quota-policy", response_model=OkResponse)
 async def update_quota_policy(
     body: QuotaPolicyBody,
     ctx: AuthContext = Depends(admin_csrf),
@@ -166,7 +178,7 @@ async def update_quota_policy(
     return {"ok": True}
 
 
-@router.get("/users/{user_id}/quota")
+@router.get("/users/{user_id}/quota", response_model=AdminUserQuotaResponse)
 async def user_quota(
     user_id: str,
     ctx: AuthContext = Depends(require_admin),
@@ -179,7 +191,7 @@ async def user_quota(
     return {"user": _user_dict(target), "quota": await capacity.summary_for(target)}
 
 
-@router.post("/users/{user_id}/quota-grants")
+@router.post("/users/{user_id}/quota-grants", response_model=OkResponse)
 async def add_grant(
     user_id: str,
     body: GrantBody,
@@ -194,7 +206,7 @@ async def add_grant(
     return {"ok": True}
 
 
-@router.post("/quota-grants/{grant_id}/revoke")
+@router.post("/quota-grants/{grant_id}/revoke", response_model=OkResponse)
 async def revoke_grant(
     grant_id: str,
     ctx: AuthContext = Depends(admin_csrf),
@@ -203,11 +215,27 @@ async def revoke_grant(
     return {"ok": True}
 
 
-@router.post("/users/{user_id}/task-limit")
+@router.post("/users/{user_id}/task-limit", response_model=OkResponse)
 async def set_task_limit(
     user_id: str,
     body: TaskLimitBody,
     ctx: AuthContext = Depends(admin_csrf),
 ) -> dict:
     await TaskCapacityService().set_limit(ctx.user.id, user_id, body.task_limit)
+    return {"ok": True}
+
+
+@router.get("/system-config", response_model=SystemConfigResponse)
+async def get_system_config(ctx: AuthContext = Depends(require_admin)) -> dict:
+    """读取所有已注册的系统配置（缺记录时回落默认值）。"""
+    return {"values": await SystemConfigDB.get_many()}
+
+
+@router.put("/system-config", response_model=OkResponse)
+async def update_system_config(
+    body: SystemConfigUpdateBody,
+    ctx: AuthContext = Depends(admin_csrf),
+) -> dict:
+    """批量更新系统配置（键须在 SYSTEM_CONFIG_KEYS 中注册）。"""
+    await SystemConfigDB.set_many(body.values)
     return {"ok": True}

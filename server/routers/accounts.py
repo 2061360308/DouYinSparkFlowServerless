@@ -4,9 +4,15 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.deps import AuthContext, Services, current_user, get_services, user_csrf
+from server.schemas import (
+    CreateAccountResponse,
+    ListAccountsResponse,
+    ListConversationsResponse,
+    OkResponse,
+)
 from core.services.accounts import AccountService
 from core.services.audit import AuditService
-from core.db.domain_models import DouyinContactIdentity, DouyinConversation
+from core.db.models import DouyinContactIdentity, DouyinConversation
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -16,7 +22,7 @@ class CreateAccountBody(BaseModel):
     cookies: str
 
 
-@router.get("")
+@router.get("", response_model=ListAccountsResponse)
 async def list_accounts(
     ctx: AuthContext = Depends(current_user),
     services: Services = Depends(get_services),
@@ -25,7 +31,7 @@ async def list_accounts(
     return {"items": await service.list_owned(ctx.user.id)}
 
 
-@router.post("")
+@router.post("", response_model=CreateAccountResponse)
 async def create_account(
     body: CreateAccountBody,
     ctx: AuthContext = Depends(user_csrf),
@@ -36,7 +42,7 @@ async def create_account(
     return {"id": account.id, "display_name": account.display_name}
 
 
-@router.delete("/{account_id}")
+@router.delete("/{account_id}", response_model=OkResponse)
 async def delete_account(
     account_id: str,
     ctx: AuthContext = Depends(user_csrf),
@@ -47,7 +53,7 @@ async def delete_account(
     return {"ok": True}
 
 
-@router.get("/{account_id}/conversations")
+@router.get("/{account_id}/conversations", response_model=ListConversationsResponse)
 async def account_conversations(
     account_id: str,
     ctx: AuthContext = Depends(current_user),

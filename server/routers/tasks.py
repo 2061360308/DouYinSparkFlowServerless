@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from server.deps import AuthContext, Services, current_user, get_services, user_csrf
+from server.schemas import Availability, ListTasksResponse, OkResponse, TaskItem
 from core.services import Conflict, NotFound, ValidationError
 from core.services.accounts import AccountService
 from core.services.audit import AuditService
 from core.services.task_capacity import TaskCapacityService
 from core.services.tasks import TaskService
-from core.db.domain_models import SparkTask, SparkTaskTargetIdentity, User
+from core.db.models import SparkTask, SparkTaskTargetIdentity, User
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -44,7 +45,7 @@ def _service(services: Services) -> TaskService:
     return TaskService(AccountService(services.cookie_cipher, AuditService()), AuditService())
 
 
-@router.get("")
+@router.get("", response_model=ListTasksResponse)
 async def list_tasks(
     ctx: AuthContext = Depends(current_user),
     services: Services = Depends(get_services),
@@ -59,7 +60,7 @@ async def list_tasks(
     }
 
 
-@router.get("/availability")
+@router.get("/availability", response_model=Availability)
 async def availability(
     send_time: str,
     exclude_task_id: str = "",
@@ -78,7 +79,7 @@ async def availability(
     }
 
 
-@router.post("")
+@router.post("", response_model=TaskItem)
 async def create_task(
     body: TaskBody,
     ctx: AuthContext = Depends(user_csrf),
@@ -91,7 +92,7 @@ async def create_task(
     return await _task_dict(task)
 
 
-@router.get("/{task_id}")
+@router.get("/{task_id}", response_model=TaskItem)
 async def get_task(
     task_id: str,
     ctx: AuthContext = Depends(current_user),
@@ -101,7 +102,7 @@ async def get_task(
     return await _task_dict(task)
 
 
-@router.put("/{task_id}")
+@router.put("/{task_id}", response_model=TaskItem)
 async def update_task(
     task_id: str,
     body: TaskBody,
@@ -115,7 +116,7 @@ async def update_task(
     return await _task_dict(task)
 
 
-@router.post("/{task_id}/toggle")
+@router.post("/{task_id}/toggle", response_model=TaskItem)
 async def toggle_task(
     task_id: str,
     ctx: AuthContext = Depends(user_csrf),
@@ -127,7 +128,7 @@ async def toggle_task(
     return await _task_dict(task)
 
 
-@router.delete("/{task_id}")
+@router.delete("/{task_id}", response_model=OkResponse)
 async def delete_task(
     task_id: str,
     ctx: AuthContext = Depends(user_csrf),

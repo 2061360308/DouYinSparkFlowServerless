@@ -8,7 +8,8 @@ from fastapi.responses import JSONResponse
 from tortoise import connections
 
 from server.deps import get_settings
-from server.routers import accounts, admin, auth, dashboard, internal, runs, tasks
+from server.routers import accounts, account_scan, admin, auth, dashboard, internal, runs, tasks
+from server.schemas import HealthResponse
 from core.services import Conflict, NotFound, ValidationError
 from core.db.connection import close_persistent, open_persistent
 
@@ -45,17 +46,17 @@ def create_app() -> FastAPI:
         status = _ERROR_STATUS.get(type(exc), 400)
         return JSONResponse(status_code=status, content={"detail": str(exc)})
 
-    @app.get("/api/health/live")
+    @app.get("/api/health/live", response_model=HealthResponse)
     async def live() -> dict:
         return {"status": "ok"}
 
-    @app.get("/api/health/ready")
+    @app.get("/api/health/ready", response_model=HealthResponse)
     async def ready() -> dict:
         conn = connections.get("default")
         await conn.execute_query("SELECT 1")
         return {"status": "ready"}
 
-    for module in (auth, accounts, tasks, runs, dashboard, admin, internal):
+    for module in (auth, accounts, account_scan, tasks, runs, dashboard, admin, internal):
         app.include_router(module.router)
 
     return app
