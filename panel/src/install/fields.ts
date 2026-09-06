@@ -109,6 +109,5 @@ export function buildParameters(spec: FunctionSpec): Record<string, string> {
     TaskCpu: String(spec.TaskCpu),
     TaskMemorySize: String(spec.TaskMemorySize),
     TaskFunctionTimeout: String(spec.TaskFunctionTimeout),
-    TaskDiskSize: '512',
   }
 }

@@ -4,7 +4,7 @@
 - ros_client.py: ROS OpenAPI 客户端库, 供后端模块创建资源栈/轮询状态/取触发器地址
 """
 
-from install.ros_client import (
+from .ros_client import (
     RosStackClient,
     RosStackError,
     StackFailedError,
