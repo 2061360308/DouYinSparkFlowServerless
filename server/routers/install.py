@@ -21,6 +21,15 @@ class DeployBody(BaseModel):
     parameters: dict[str, str] = Field(default_factory=dict, max_length=32)
 
 
+class ConfirmBody(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    confirmation: str = Field(min_length=1, max_length=128)
+
+
+class RepairBody(ConfirmBody):
+    credentials: Credentials
+
+
 @router.get('/status')
 async def status(ctx: AuthContext = Depends(require_admin)) -> dict:
     return await InstallationService(get_settings()).status()
@@ -36,3 +45,21 @@ async def deploy(body: DeployBody, ctx: AuthContext = Depends(admin_csrf)) -> di
 @router.post('/refresh')
 async def refresh(ctx: AuthContext = Depends(admin_csrf)) -> dict:
     return await InstallationService(get_settings()).refresh()
+
+
+@router.post('/credentials')
+async def repair(body: RepairBody, ctx: AuthContext = Depends(admin_csrf)) -> dict:
+    return await InstallationService(get_settings()).repair_credentials({
+        'accessKeyId': body.credentials.accessKeyId,
+        'accessKeySecret': body.credentials.accessKeySecret.get_secret_value(),
+    }, body.confirmation)
+
+
+@router.post('/cleanup')
+async def cleanup(body: ConfirmBody, ctx: AuthContext = Depends(admin_csrf)) -> dict:
+    return await InstallationService(get_settings()).cleanup(body.confirmation)
+
+
+@router.post('/reset')
+async def reset(body: ConfirmBody, ctx: AuthContext = Depends(admin_csrf)) -> dict:
+    return await InstallationService(get_settings()).reset(body.confirmation)

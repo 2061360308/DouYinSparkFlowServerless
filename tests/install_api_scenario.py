@@ -28,6 +28,8 @@ class FakeROS:
     lose_response = True
     missing_output = False
     failure = False
+    deletion = ''
+    deletes = 0
 
     def __init__(self, **kwargs):
         assert kwargs['access_key_secret'] == 'test-secret'
@@ -41,6 +43,8 @@ class FakeROS:
 
     def get_stack_status(self, stack_id):
         assert stack_id == 'remote-stack-1'
+        if self.deletion:
+            return {'Status': self.deletion}
         if self.failure:
             return {'Status': 'CREATE_FAILED', 'StatusReason': 'denied test-secret test-id'}
         if not self.complete:
@@ -56,6 +60,12 @@ class FakeROS:
                 'EventBusName': 'DouyinSpark-bus',
             }.items()
         ]}
+
+    def delete_stack(self, stack_id):
+        assert stack_id == 'remote-stack-1'
+        type(self).deletes += 1
+        type(self).deletion = 'DELETE_IN_PROGRESS'
+        raise TimeoutError('delete response lost')
 
 
 installation.RosStackClient = FakeROS
@@ -118,7 +128,31 @@ with TestClient(create_app()) as client:
     assert failed.json()['status'] == 'CREATE_FAILED'
     assert '[redacted]' in failed.text and 'test-secret' not in failed.text and 'test-id' not in failed.text
     assert not client.get('/api/install/status').json()['installed']
+    confirmation = {'confirmation': 'remote-stack-1'}
+    # A stale failure in our DB must not authorize deleting a recovered cloud stack.
+    FakeROS.failure, FakeROS.complete = False, True
+    assert client.post('/api/install/cleanup', json=confirmation, headers=csrf).status_code == 409
+    assert FakeROS.deletes == 0
+    assert client.get('/api/install/status').json()['deployment']['rawStatus'] == 'CREATE_IN_PROGRESS'
+    FakeROS.failure, FakeROS.complete = True, False
+    assert client.post('/api/install/refresh', headers=csrf).json()['rawStatus'] == 'CREATE_FAILED'
+    assert client.post('/api/install/cleanup', json=confirmation).status_code == 403
+    assert client.post('/api/install/reset', json=confirmation, headers=csrf).status_code == 409
+    assert client.post('/api/install/cleanup', json={'confirmation': 'wrong'}, headers=csrf).status_code == 400
+    repaired = client.post('/api/install/credentials', json={**confirmation, 'credentials': body['credentials']}, headers=csrf)
+    assert repaired.status_code == 200, repaired.text
+    assert client.post('/api/install/cleanup', json=confirmation, headers=csrf).status_code == 400
+    assert client.get('/api/install/status').json()['deployment']['rawStatus'] == 'DELETE_REQUESTED'
+    assert client.post('/api/install/refresh', headers=csrf).json()['rawStatus'] == 'DELETE_IN_PROGRESS'
+    assert FakeROS.deletes == 1, 'Lost delete response must query before deleting again'
+    assert client.post('/api/install/reset', json=confirmation, headers=csrf).status_code == 409
+    FakeROS.deletion = 'DELETE_COMPLETE'
+    assert client.post('/api/install/refresh', headers=csrf).json()['rawStatus'] == 'DELETE_COMPLETE'
+    assert client.post('/api/install/reset', json=confirmation, headers=csrf).status_code == 200
+    FakeROS.deletion = ''
     FakeROS.failure = False
+    assert client.post('/api/install/deploy', json=body, headers=csrf).status_code == 200
+    assert FakeROS.calls[-1]['client_token'] != FakeROS.calls[0]['client_token']
     changed = dict(body, parameters={'Cpu': '2', 'MemorySize': '2048'})
     assert client.post('/api/install/deploy', json=changed, headers=csrf).status_code == 409
     from core.browser.manager import BrowserManager
@@ -133,6 +167,7 @@ with TestClient(create_app()) as client:
     assert result.status_code == 200, result.text
     assert result.json()['status'] == 'CREATE_COMPLETE'
     assert client.get('/api/install/status').json()['installed'] is True
+    assert client.post('/api/install/cleanup', json=confirmation, headers=csrf).status_code == 409
     config = client.get('/api/admin/system-config').json()['values']
     assert config['fc_function_url'] == 'https://browser.example.test'
     assert config['eventbridge_bus_name'] == 'DouyinSpark-bus'
@@ -160,5 +195,7 @@ with TestClient(create_app()) as client:
     auth = client.post('/api/auth/login', json={'username': 'admin', 'password': 'new-password-5678'})
     state = client.get('/api/install/status').json()
     assert state['installed'] and state['deployment']['stackId'] == 'remote-stack-1'
+    from task_scheduling_scenario import check_scheduling
+    check_scheduling(client, {'X-CSRF-Token': auth.json()['csrf_token']})
 
 print('Installation auth, validation, deduplication, restore, encryption and completion: PASS')

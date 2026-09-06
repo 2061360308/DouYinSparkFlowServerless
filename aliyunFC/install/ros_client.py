@@ -165,6 +165,7 @@ class RosStackClient:
             access_key_secret=access_key_secret,
             security_token=security_token,
             endpoint=endpoint or f"ros.{region}.aliyuncs.com",
+            connect_timeout=3000, read_timeout=10000,
         )
         self.client = RosClient(cfg)
         self.region = region
@@ -255,6 +256,15 @@ class RosStackClient:
             for k, v in body.to_map().items()
             if v is not None
         }
+
+    def delete_stack(self, stack_id: str) -> None:
+        """删除指定资源栈及其资源；调用方负责权限与明确确认。"""
+        try:
+            self.client.delete_stack(ros_models.DeleteStackRequest(
+                region_id=self.region, stack_id=stack_id, retain_all_resources=False,
+            ))
+        except TeaException as exc:
+            raise self._to_ros_error(exc) from exc
 
     def wait_stack_complete(
         self,

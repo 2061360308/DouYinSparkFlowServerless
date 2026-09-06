@@ -200,6 +200,8 @@ class TaskCapacityService:
             task.enabled = False
             task.next_run_at = None
             await task.save(update_fields=["enabled", "next_run_at", "updated_at"])
+            from core.services.task_scheduling import sync_task
+            await sync_task(task.id)
             await self.audit.write(
                 None,
                 "task.quota_auto_paused",

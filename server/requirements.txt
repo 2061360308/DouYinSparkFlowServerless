@@ -4,6 +4,7 @@ alibabacloud-ros20190910>=1.0.0
 alibabacloud-fc20230330>=3.0.0
 alibabacloud-sts20150401>=1.0.0
 PyYAML>=6.0
+alibabacloud-eventbridge20200401>=1.0.0
 fastapi>=0.116.0
 tortoise-orm>=0.21.0
 asyncpg>=0.29.0

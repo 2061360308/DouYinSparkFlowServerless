@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   NButton,
+  NAlert,
   NCard,
   NDataTable,
   NForm,
@@ -36,11 +37,21 @@ const tasks = ref<TaskItem[]>([])
 const quota = ref<QuotaSummary | null>(null)
 const accounts = ref<AccountItem[]>([])
 const loading = ref(true)
+const loadError = ref('')
+const busyIds = ref(new Set<string>())
+const search = ref('')
+const filter = ref('all')
+const pendingCount = computed(() => tasks.value.filter(t => t.schedule_state !== 'synced').length)
+const enabledCount = computed(() => tasks.value.filter(t => t.enabled).length)
+const visibleTasks = computed(() => tasks.value.filter(t =>
+  (!search.value || `${t.target_name} ${t.message_template}`.includes(search.value.trim())) &&
+  (filter.value === 'all' || (filter.value === 'enabled' ? t.enabled : t.schedule_state !== 'synced')),
+))
 
 const showEdit = ref(false)
 const editingId = ref<string | null>(null)
 const submitting = ref(false)
-const form = ref({ account_id: '', target_name: '', send_time: '', message_template: '' })
+const form = ref({ account_id: '', target_name: '', target_sec_uid: '', send_time: '', message_template: '' })
 const availability = ref<Availability | null>(null)
 
 const accountOptions = computed<SelectOption[]>(() =>
@@ -58,7 +69,7 @@ const columns: DataTableColumns<TaskItem> = [
     title: '时间',
     key: 'send_time',
     width: 70,
-    render: (row) => h('b', { style: 'color:#aa3bff' }, row.send_time),
+    render: (row) => h('b', { class: 'task-time' }, row.send_time),
   },
   { title: '好友', key: 'target_name', width: 120 },
   {
@@ -75,16 +86,22 @@ const columns: DataTableColumns<TaskItem> = [
         { default: () => (row.enabled ? '启用' : '暂停') }),
   },
   {
+    title: '调度', key: 'schedule_state', width: 116,
+    render: row => h(NTag, { size: 'small', bordered: false, type: row.schedule_state === 'synced' ? 'success' : 'warning', title: row.schedule_error },
+      { default: () => row.schedule_state === 'synced' ? (row.enabled ? '已就绪' : '已停止') : '待同步' }),
+  },
+  {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 248,
     render: (row) =>
       h(NSpace, { size: 4 }, {
         default: () => [
-          h(NButton, { size: 'small', tertiary: true, onClick: () => openEdit(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', tertiary: true, type: row.enabled ? 'warning' : 'success', onClick: () => toggle(row) },
+          h(NButton, { size: 'small', tertiary: true, disabled: busyIds.value.has(row.id), onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', tertiary: true, disabled: busyIds.value.has(row.id), type: row.enabled ? 'warning' : 'success', onClick: () => toggle(row) },
             { default: () => (row.enabled ? '暂停' : '启用') }),
-          h(NButton, { size: 'small', tertiary: true, type: 'error', onClick: () => confirmDelete(row) }, { default: () => '删除' }),
+          ...(row.schedule_state !== 'synced' ? [h(NButton, { size: 'small', disabled: busyIds.value.has(row.id), onClick: () => retrySync(row) }, { default: () => '同步' })] : []),
+          h(NButton, { size: 'small', tertiary: true, disabled: busyIds.value.has(row.id), type: 'error', onClick: () => confirmDelete(row) }, { default: () => '删除' }),
         ],
       }),
   },
@@ -92,13 +109,14 @@ const columns: DataTableColumns<TaskItem> = [
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const [taskRes, accRes] = await Promise.all([taskApi.list(), accountApi.list()])
     tasks.value = taskRes.items
     quota.value = taskRes.quota
     accounts.value = accRes.items
   } catch {
-    message.error('加载失败')
+    loadError.value = '任务加载失败，请检查连接后重试。'
   } finally {
     loading.value = false
   }
@@ -106,7 +124,7 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { account_id: accounts.value[0]?.id ?? '', target_name: '', send_time: '', message_template: '' }
+  form.value = { account_id: accounts.value[0]?.id ?? '', target_name: '', target_sec_uid: '', send_time: '', message_template: '' }
   availability.value = null
   showEdit.value = true
 }
@@ -116,6 +134,7 @@ function openEdit(row: TaskItem) {
   form.value = {
     account_id: row.account_id ?? '',
     target_name: row.target_name,
+    target_sec_uid: row.target_sec_uid,
     send_time: row.send_time,
     message_template: row.message_template,
   }
@@ -124,23 +143,28 @@ function openEdit(row: TaskItem) {
 }
 
 let availTimer: ReturnType<typeof setTimeout> | null = null
+let availabilityVersion = 0
 watch(
-  () => form.value.send_time,
-  (value) => {
+  () => [form.value.send_time, editingId.value, showEdit.value] as const,
+  ([value, taskId, open]) => {
+    const version = ++availabilityVersion
     availability.value = null
     if (availTimer) clearTimeout(availTimer)
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return
+    if (!open || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return
     availTimer = setTimeout(async () => {
       try {
-        availability.value = await taskApi.availability(value, editingId.value ?? '')
+        const result = await taskApi.availability(value, taskId ?? '')
+        if (version === availabilityVersion) availability.value = result
       } catch {
         /* ignore */
       }
     }, 250)
   },
 )
+onUnmounted(() => { availabilityVersion++; if (availTimer) clearTimeout(availTimer) })
 
 async function submit() {
+  if (submitting.value) return
   if (!form.value.account_id) return message.warning('请选择抖音账号')
   if (!form.value.target_name.trim()) return message.warning('请填写好友名称')
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.value.send_time)) return message.warning('请选择发送时间')
@@ -150,15 +174,13 @@ async function submit() {
     const body = {
       account_id: form.value.account_id,
       target_name: form.value.target_name.trim(),
+      target_sec_uid: form.value.target_sec_uid,
       send_time: form.value.send_time,
       message_template: form.value.message_template.trim(),
     }
-    if (editingId.value) {
-      await taskApi.update(editingId.value, body)
-    } else {
-      await taskApi.create(body)
-    }
-    message.success('已保存')
+    const saved = editingId.value ? await taskApi.update(editingId.value, body) : await taskApi.create(body)
+    if (saved.schedule_state !== 'synced') message.warning('任务已保存，调度待同步，请点击任务旁的“同步”重试')
+    else message.success('任务和调度已保存')
     showEdit.value = false
     await load()
   } catch (error) {
@@ -169,12 +191,27 @@ async function submit() {
 }
 
 async function toggle(row: TaskItem) {
+  if (busyIds.value.has(row.id)) return
+  busyIds.value.add(row.id)
   try {
-    await taskApi.toggle(row.id)
+    const result = await taskApi.toggle(row.id)
+    if (result.schedule_state !== 'synced') message.warning(result.schedule_error)
     await load()
   } catch (error) {
     message.error(error instanceof ApiError ? error.detail : '操作失败')
-  }
+  } finally { busyIds.value.delete(row.id) }
+}
+
+async function retrySync(row: TaskItem) {
+  if (busyIds.value.has(row.id)) return
+  busyIds.value.add(row.id)
+  try {
+    const result = await taskApi.sync(row.id)
+    if (result.schedule_state === 'synced') message.success('调度已同步')
+    else message.warning(result.schedule_error)
+    await load()
+  } catch (error) { message.error(error instanceof ApiError ? error.detail : '同步失败') }
+  finally { busyIds.value.delete(row.id) }
 }
 
 function confirmDelete(row: TaskItem) {
@@ -184,13 +221,17 @@ function confirmDelete(row: TaskItem) {
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
+      if (busyIds.value.has(row.id)) return false
+      busyIds.value.add(row.id)
       try {
         await taskApi.remove(row.id)
         message.success('已删除')
         await load()
       } catch (error) {
         message.error(error instanceof ApiError ? error.detail : '删除失败')
-      }
+        await load()
+        return false
+      } finally { busyIds.value.delete(row.id) }
     },
   })
 }
@@ -199,6 +240,7 @@ onMounted(load)
 </script>
 
 <template>
+  <div class="task-heading"><div><span class="eyebrow">DAILY ROUTINE</span><h1>每天的约定，按时续上。</h1><p>管理发送时间、好友和消息，确认每个任务的调度状态。</p></div><div class="task-totals"><strong>{{ enabledCount }}</strong><span>启用任务</span><strong>{{ pendingCount }}</strong><span>待同步</span></div></div>
   <n-card title="续火任务">
     <template #header-extra>
       <n-space align="center">
@@ -206,7 +248,12 @@ onMounted(load)
         <n-button type="primary" :disabled="accounts.length === 0" @click="openCreate">新建任务</n-button>
       </n-space>
     </template>
-    <n-data-table :columns="columns" :data="tasks" :loading="loading" :bordered="false" scroll-x="auto" />
+    <n-alert v-if="loadError" type="error" class="task-alert">{{ loadError }} <n-button text @click="load">重新加载</n-button></n-alert>
+    <n-alert v-else-if="pendingCount" type="warning" class="task-alert">{{ pendingCount }} 个任务尚未同步，请点击任务旁的“同步”重试。暂停后不再启动新的执行，正在执行的任务不会中断。</n-alert>
+    <div class="task-toolbar"><n-input v-model:value="search" clearable placeholder="搜索好友或消息" aria-label="搜索任务" /><n-select v-model:value="filter" :options="[{ label: '全部任务', value: 'all' }, { label: '已启用', value: 'enabled' }, { label: '待同步', value: 'pending' }]" aria-label="筛选任务" /><n-button :loading="loading" @click="load">刷新</n-button></div>
+    <n-data-table :columns="columns" :data="visibleTasks" :loading="loading" :bordered="false" :scroll-x="850" :pagination="{ pageSize: 10 }">
+      <template #empty>{{ search || filter !== 'all' ? '没有符合条件的任务，试试其他筛选。' : '还没有续火任务，选择好友和时间，创建第一条每日计划。' }}</template>
+    </n-data-table>
     <n-text v-if="accounts.length === 0" depth="3" class="tip">请先在「抖音账号」添加账号后再创建任务。</n-text>
   </n-card>
 
@@ -218,10 +265,10 @@ onMounted(load)
   >
     <n-form :model="form" label-placement="top">
       <n-form-item label="抖音账号">
-        <n-select v-model:value="form.account_id" :options="accountOptions" placeholder="选择账号" />
+        <n-select v-model:value="form.account_id" :options="accountOptions" placeholder="选择账号" @update:value="form.target_sec_uid = ''" />
       </n-form-item>
       <n-form-item label="好友名称 / 备注">
-        <n-input v-model:value="form.target_name" placeholder="聊天列表中显示的名称" />
+        <n-input v-model:value="form.target_name" maxlength="64" placeholder="聊天列表中显示的名称" @update:value="form.target_sec_uid = ''" />
       </n-form-item>
       <n-form-item label="每日发送时间">
         <n-time-picker
@@ -269,6 +316,17 @@ onMounted(load)
 </template>
 
 <style scoped>
+.task-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
+.eyebrow { font: 11px Consolas, monospace; letter-spacing: .13em; color: #b76a31; }
+h1 { font-size: 26px; margin: 10px 0 6px; letter-spacing: -.025em; }
+.task-heading p { margin: 0; opacity: .6; }
+.task-totals { display: grid; grid-template-columns: auto auto; gap: 6px 14px; align-items: baseline; white-space: nowrap; }
+.task-totals strong { font: 28px Consolas, monospace; }
+.task-totals span { font-size: 12px; opacity: .6; }
+.task-toolbar { display: grid; grid-template-columns: minmax(160px, 1fr) 150px auto; gap: 12px; margin-bottom: 18px; }
+.task-alert { margin-bottom: 18px; }
+:deep(.task-time) { font: 600 16px Consolas, monospace; font-variant-numeric: tabular-nums; }
+@media (max-width: 650px) { .task-heading { align-items: flex-start; } h1 { font-size: 21px; } .task-totals { display: none; } .task-toolbar { grid-template-columns: 1fr auto; } .task-toolbar > :first-child { grid-column: 1 / -1; } }
 .tip {
   display: block;
   margin-top: 10px;

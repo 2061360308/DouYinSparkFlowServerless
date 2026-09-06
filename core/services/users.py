@@ -108,7 +108,9 @@ class UserService:
             raise ValidationError("不能删除当前管理员账号")
         if confirmation != user.username:
             raise ValidationError("确认用户名不匹配")
-        await SparkTask.filter(owner_user_id=user.id).delete()
+        from core.services.task_scheduling import delete_task
+        for task_id in await SparkTask.filter(owner_user_id=user.id).values_list('id', flat=True):
+            await delete_task(task_id)
         await DouyinAccount.filter(owner_user_id=user.id).delete()
         await WebSession.filter(user_id=user.id).delete()
         await user.delete()
