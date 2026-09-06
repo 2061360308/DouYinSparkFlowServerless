@@ -24,6 +24,8 @@ SystemConfigDB 保留通用按键读写 get_value/set_value，
 
 from typing import Any, Optional
 
+from tortoise.transactions import in_transaction
+
 from .config import SYSTEM_CONFIG_KEYS
 from .connection import with_db
 from .models import SystemConfig
@@ -124,13 +126,14 @@ class SystemConfigDB:
     @staticmethod
     @with_db
     async def set_many(values: dict[str, Any]) -> None:
-        """批量写入配置（原子性由逐条 upsert 保证，键须已注册）。"""
+        """批量写入配置：全部成功才提交，任意一项失败则整批回滚。"""
         unknown = [k for k in values if k not in SYSTEM_CONFIG_KEYS]
         if unknown:
             raise ValueError(f"未知系统配置键: {unknown}，可用键: {sorted(SYSTEM_CONFIG_KEYS)}")
-        for key, value in values.items():
-            # 嵌套调用：with_db 引用计数保证不会提前关闭连接
-            await SystemConfigDB.set_value(key, value)
+        async with in_transaction():
+            for key, value in values.items():
+                # 嵌套调用复用当前事务；连接由外层 with_db 保持。
+                await SystemConfigDB.set_value(key, value)
 
     @staticmethod
     @with_db

@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NCard, NSpace, NStep, NSteps } from 'naive-ui'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { NAlert, NButton, NCard, NSpace, NStep, NSteps, NSpin } from 'naive-ui'
 
 import { createInstallStore, resetDeploy } from './useInstallForm'
-import {
-  clearInstalled,
-  getSavedOutputs,
-  isInstalled,
-  markInstalled,
-} from '../composables/useInstallState'
+import { getInstallStatus, type InstallStatus } from '../composables/useInstallState'
 import StepPrepare from './steps/StepPrepare.vue'
 import StepConfig from './steps/StepConfig.vue'
 import StepReview from './steps/StepReview.vue'
@@ -22,26 +18,40 @@ const STEP_TITLES = ['准备', '填配置', '确认', '部署', '完成'] as con
 const current = ref(1)
 const deployKey = ref(0)
 const configRef = ref<InstanceType<typeof StepConfig> | null>(null)
+const router = useRouter()
+const loading = ref(true)
+const loadError = ref('')
+const installation = ref<InstallStatus | null>(null)
 
-// 已安装（stub）则直接回到「完成」步，展示上次部署输出。
-onMounted(() => {
-  if (isInstalled()) {
-    store.deploy.phase = 'success'
-    store.deploy.status = 'CREATE_COMPLETE'
-    store.deploy.outputs = getSavedOutputs()
-    current.value = 5
-  }
-})
-
-// 部署成功即持久化安装状态（stub；后端就绪后由接口落库）。
-watch(
-  () => store.deploy.phase,
-  (phase) => {
-    if (phase === 'success' && store.deploy.outputs) {
-      markInstalled(store.deploy.outputs)
+async function restore(): Promise<void> {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const state = await getInstallStatus()
+    installation.value = state
+    if (state.mode === 'local' || (state.installed && !state.deployment)) {
+      await router.replace('/')
+      return
     }
-  },
-)
+    if (state.deployment) {
+      const deployment = state.deployment
+      store.deploy.stackId = deployment.stackId
+      store.deploy.status = deployment.status
+      store.deploy.outputs = deployment.outputs ?? null
+      store.deploy.phase = state.installed ? 'success' : 'deploying'
+      current.value = state.installed ? 5 : 4
+      deployKey.value += 1
+    } else {
+      resetDeploy(store)
+      current.value = 1
+    }
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : '无法获取安装状态'
+  } finally {
+    loading.value = false
+  }
+}
+onMounted(restore)
 
 const stepsStatus = computed<'process' | 'error' | 'finish'>(() => {
   if (current.value === 4 && store.deploy.phase === 'error') return 'error'
@@ -51,7 +61,6 @@ const stepsStatus = computed<'process' | 'error' | 'finish'>(() => {
 
 const canPrev = computed(() => {
   if (current.value === 2 || current.value === 3) return true
-  if (current.value === 4 && store.deploy.phase === 'error') return true
   return false
 })
 
@@ -75,19 +84,13 @@ function startDeploy(): void {
 }
 
 function retry(): void {
-  resetDeploy(store)
-  deployKey.value += 1
+  void restore()
 }
 
 function viewResult(): void {
   current.value = 5
 }
 
-function reinstall(): void {
-  clearInstalled()
-  resetDeploy(store)
-  current.value = 1
-}
 </script>
 
 <template>
@@ -101,7 +104,16 @@ function reinstall(): void {
         <n-step v-for="title in STEP_TITLES" :key="title" :title="title" />
       </n-steps>
 
-      <div class="step-body">
+      <n-spin v-if="loading" />
+      <n-alert v-else-if="loadError" type="error" title="安装状态查询失败">
+        {{ loadError }}
+        <n-button @click="restore">重新查询</n-button>
+      </n-alert>
+      <n-alert v-else-if="installation && !installation.canDeploy && current < 4" type="warning" title="部署前请完成服务器配置">
+        {{ installation.missingEnv.join('、') }}
+        <n-button @click="restore">重新检查</n-button>
+      </n-alert>
+      <div v-if="!loading && !loadError" class="step-body">
         <StepPrepare v-if="current === 1" />
         <StepConfig v-else-if="current === 2" ref="configRef" />
         <StepReview v-else-if="current === 3" />
@@ -110,24 +122,24 @@ function reinstall(): void {
       </div>
 
       <template #footer>
-        <div class="footer">
+        <div v-if="!loading && !loadError" class="footer">
           <n-button v-if="canPrev" @click="prev">上一步</n-button>
           <div class="spacer" />
           <n-space>
             <template v-if="current === 1 || current === 2">
-              <n-button type="primary" @click="next">下一步</n-button>
+              <n-button type="primary" :disabled="!installation?.canDeploy" @click="next">下一步</n-button>
             </template>
             <template v-else-if="current === 3">
               <n-button type="primary" @click="startDeploy">开始部署</n-button>
             </template>
             <template v-else-if="current === 4 && store.deploy.phase === 'error'">
-              <n-button type="primary" @click="retry">重试</n-button>
+              <n-button type="primary" @click="retry">恢复查询</n-button>
             </template>
             <template v-else-if="current === 4 && store.deploy.phase === 'success'">
               <n-button type="primary" @click="viewResult">查看结果</n-button>
             </template>
             <template v-else-if="current === 5">
-              <n-button @click="reinstall">重新安装</n-button>
+              <n-button type="primary" @click="router.push('/')">进入控制台</n-button>
             </template>
           </n-space>
         </div>

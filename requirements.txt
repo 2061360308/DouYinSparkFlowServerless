@@ -1,5 +1,6 @@
 # Python >= 3.9
 tortoise-orm>=0.21.0
+PyYAML>=6.0
 
 # ═══ 控制台后端（spark_console 迁移至 FastAPI，适配 Vercel serverless）═══
 # API 层

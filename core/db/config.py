@@ -26,6 +26,7 @@ TORTOISE_ORM = {
         "models": {
             "models": [
                 "core.db.models.system",
+                "core.db.models.installation",
                 "core.db.models.browser",
                 "core.db.models.user",
                 "core.db.models.account",
@@ -49,6 +50,9 @@ TORTOISE_ORM = {
 # 键集合在首次建表（db/init_db.py）时即固定，运行期仅更新与查询值，不增删键。
 # 需要新增配置时，在此追加键与默认值，再执行一次 python -m core.db 即可。
 SYSTEM_CONFIG_KEYS: dict[str, str] = {
+    "eventbridge_bus_name": "",
+    "task_function_name": "",
+    "task_function_url": "",
     "browser_concurrency": "4",  # 浏览器并发数
 
     # ═══ 云函数浏览器（browser/cloud.py）运行期配置 ═══

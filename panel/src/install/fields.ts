@@ -72,6 +72,8 @@ export const MEMORY_RATIO_MAX = 4096 // 每 vCPU 最多 4GB
 export const TIMEOUT_MIN = 1
 export const TIMEOUT_MAX = 86400
 export const DISK_OPTIONS = [512, 10240] as const
+// 1536MB 的业务下限要求至少 0.375 vCPU，按 CPU 步进向上取整。
+export const BROWSER_CPU_MIN = Math.ceil(MEMORY_FLOOR / MEMORY_RATIO_MAX / CPU_STEP) * CPU_STEP
 
 /**
  * 依据当前 Cpu 计算内存下限/上限。
@@ -85,12 +87,15 @@ export function memoryBounds(
   const rawMin = Math.max(floor, safeCpu * MEMORY_RATIO_MIN)
   const min = Math.ceil(rawMin / MEMORY_STEP) * MEMORY_STEP
   const max = Math.floor((safeCpu * MEMORY_RATIO_MAX) / MEMORY_STEP) * MEMORY_STEP
-  return { min: Math.max(min, floor), max: Math.max(min, max) }
+  return { min, max }
 }
 
 /** 将内存夹取到当前 Cpu 允许的区间，并对齐到 64MB 倍数。 */
 export function clampMemory(cpu: number, memory: number, floor = MEMORY_FLOOR): number {
   const { min, max } = memoryBounds(cpu, floor)
+  // 无合法区间时保留业务下限，由 CPU 校验拒绝该规格。
+  if (min > max) return min
+  if (!Number.isFinite(memory)) return min
   const aligned = Math.round(memory / MEMORY_STEP) * MEMORY_STEP
   return Math.min(max, Math.max(min, aligned))
 }
@@ -100,6 +105,7 @@ export function clampMemory(cpu: number, memory: number, floor = MEMORY_FLOOR): 
  * 固定项 + 用户函数规格，全部转为字符串（ROS ParameterValue 要求字符串）。
  */
 export function buildParameters(spec: FunctionSpec): Record<string, string> {
+  validateSpec(spec)
   return {
     ...FIXED_PARAMETERS,
     Cpu: String(spec.Cpu),
@@ -109,5 +115,29 @@ export function buildParameters(spec: FunctionSpec): Record<string, string> {
     TaskCpu: String(spec.TaskCpu),
     TaskMemorySize: String(spec.TaskMemorySize),
     TaskFunctionTimeout: String(spec.TaskFunctionTimeout),
+  }
+}
+
+/** 表单继续与实际提交共用校验，避免清空输入后提交 null/NaN。 */
+export function validateSpec(spec: FunctionSpec): void {
+  for (const [label, cpu, memory, timeout, floor] of [
+    ['浏览器函数', spec.Cpu, spec.MemorySize, spec.FunctionTimeout, MEMORY_FLOOR],
+    ['任务执行器', spec.TaskCpu, spec.TaskMemorySize, spec.TaskFunctionTimeout, TASK_MEMORY_FLOOR],
+  ] as const) {
+    if (!Number.isFinite(cpu) || cpu < CPU_MIN || cpu > CPU_MAX ||
+        Math.abs(cpu / CPU_STEP - Math.round(cpu / CPU_STEP)) > 1e-8) {
+      throw new Error(`${label} CPU 需在 ${CPU_MIN}~${CPU_MAX} 之间，且为 ${CPU_STEP} 的倍数`)
+    }
+    const { min, max } = memoryBounds(cpu, floor)
+    if (min > max) throw new Error(`${label} CPU 太低，无法满足最低内存要求`)
+    if (!Number.isFinite(memory) || memory % MEMORY_STEP !== 0 || memory < min || memory > max) {
+      throw new Error(`${label}内存需在 ${min}~${max} MB 之间，且为 ${MEMORY_STEP} 的倍数`)
+    }
+    if (!Number.isInteger(timeout) || timeout < TIMEOUT_MIN || timeout > TIMEOUT_MAX) {
+      throw new Error(`${label}超时需为 ${TIMEOUT_MIN}~${TIMEOUT_MAX} 秒之间的整数`)
+    }
+  }
+  if (!(DISK_OPTIONS as readonly number[]).includes(spec.DiskSize)) {
+    throw new Error('浏览器函数磁盘只能为 512 或 10240 MB')
   }
 }

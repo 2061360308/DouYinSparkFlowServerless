@@ -10,6 +10,7 @@ import {
   NInput,
   NInputNumber,
   NSelect,
+  useMessage,
   type FormInst,
   type FormItemRule,
 } from 'naive-ui'
@@ -17,6 +18,7 @@ import {
 import { useInstallStore } from '../useInstallForm'
 import {
   CPU_MAX,
+  BROWSER_CPU_MIN,
   CPU_MIN,
   CPU_STEP,
   DISK_OPTIONS,
@@ -26,10 +28,12 @@ import {
   TIMEOUT_MIN,
   clampMemory,
   memoryBounds,
+  validateSpec,
 } from '../fields'
 
 const store = useInstallStore()
 const formRef = ref<FormInst | null>(null)
+const message = useMessage()
 
 const diskOptions = DISK_OPTIONS.map((v) => ({ label: `${v} MB`, value: v }))
 
@@ -110,11 +114,17 @@ watch(
 )
 
 async function validate(): Promise<boolean> {
-  if (!formRef.value) return true
+  if (!formRef.value) return false
   try {
     await formRef.value.validate()
-    return true
   } catch {
+    return false
+  }
+  try {
+    validateSpec(store.spec)
+    return true
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '请检查函数规格')
     return false
   }
 }
@@ -178,7 +188,7 @@ defineExpose({ validate })
             <n-form-item label="CPU（vCPU）" path="spec.Cpu" :rule="cpuRule">
               <n-input-number
                 v-model:value="store.spec.Cpu"
-                :min="CPU_MIN"
+                :min="BROWSER_CPU_MIN"
                 :max="CPU_MAX"
                 :step="CPU_STEP"
                 :precision="2"

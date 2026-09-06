@@ -1,5 +1,9 @@
 # Vercel Python 函数（控制台 API）依赖 —— 仅 API 层所需，保持冷启动精简。
-# 与仓库根 requirements.txt 的区别：不含阿里云 SDK 等执行面依赖。
+# 包含安装向导所需 ROS SDK；执行面其余 SDK 仍在根依赖文件。
+alibabacloud-ros20190910>=1.0.0
+alibabacloud-fc20230330>=3.0.0
+alibabacloud-sts20150401>=1.0.0
+PyYAML>=6.0
 fastapi>=0.116.0
 tortoise-orm>=0.21.0
 asyncpg>=0.29.0
