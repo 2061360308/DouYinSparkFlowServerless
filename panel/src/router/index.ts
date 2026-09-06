@@ -7,6 +7,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import { setUnauthorizedHandler } from '../api/console.http'
 import { useAuth } from '../composables/useAuth'
+import { getInstallStatus } from '../composables/useInstallState'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -19,7 +20,7 @@ const routes: RouteRecordRaw[] = [
     path: '/install',
     name: 'install',
     component: () => import('../install/InstallWizard.vue'),
-    meta: { public: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: '/',
@@ -97,6 +98,14 @@ router.beforeEach(async (to) => {
   }
   if (to.meta.requiresAdmin && !auth.state.isAdmin) {
     return { name: 'dashboard' }
+  }
+  if (auth.state.isAdmin && !to.meta.allowChange && to.name !== 'install' && to.name !== 'admin-system-settings') {
+    try {
+      if ((await getInstallStatus()).needsInstall) return { name: 'install' }
+    } catch {
+      // 安装页显示状态查询错误并提供重试，不能把查询失败视为已安装。
+      return { name: 'install' }
+    }
   }
   return true
 })

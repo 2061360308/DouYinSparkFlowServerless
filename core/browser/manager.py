@@ -99,10 +99,10 @@ class BrowserManager:
     async def get_instance(cls) -> "BrowserManager":
         """获取唯一实例；首次调用读取配置并构建后端（并发安全，幂等）。"""
         inst = cls()  # 单例
-        if inst._ready:
+        if inst._ready and inst.mode == "local":
             return inst
         async with cls._lock:
-            if not inst._ready:
+            if not inst._ready or inst.mode == "cloud":
                 await inst._load_config()
         return inst
 
@@ -126,6 +126,9 @@ class BrowserManager:
         ]
         docker = is_docker_deployment()
         vals = await SystemConfigDB.get_many(base_keys + ([] if docker else cloud_keys))
+        if not docker:
+            from core.services.installation import installed_credentials
+            vals.update(await installed_credentials())
 
         self.concurrency = max(1, _to_int(vals["browser_concurrency"], 4))
         self.ttl = _to_int(vals["session_ttl_seconds"], 600)
@@ -144,6 +147,8 @@ class BrowserManager:
         else:
             from .cloud import CloudBackend
 
+            if self.mode == "cloud" and getattr(self, "_cloud_config", None) == vals:
+                return
             self.mode = "cloud"
             self.backend = CloudBackend(
                 function_url=vals["fc_function_url"],
@@ -156,6 +161,7 @@ class BrowserManager:
                 qualifier=vals["fc_qualifier"] or "LATEST",
                 start_timeout=180.0,  # /start 冷启动就绪上限（与 session ttl 解耦）
             )
+            self._cloud_config = dict(vals)
         self._ready = True
         logger.info("BrowserManager 就绪：mode=%s concurrency=%s ttl=%s idle=%s",
                     self.mode, self.concurrency, self.ttl, self.idle)
