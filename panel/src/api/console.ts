@@ -176,6 +176,10 @@ export const dashboardApi = {
   platformStatus: () => http.get<PlatformStatus>('/api/platform-status'),
 }
 
+export interface SystemConfigMap {
+  values: Record<string, string>
+}
+
 export const adminApi = {
   users: (q = '', page = 1) =>
     http.get<{ items: AdminUserRow[]; page: Pagination }>(
@@ -198,4 +202,7 @@ export const adminApi = {
     http.post<{ ok: boolean }>(`/api/admin/quota-grants/${grantId}/revoke`),
   setTaskLimit: (id: string, task_limit: number) =>
     http.post<{ ok: boolean }>(`/api/admin/users/${id}/task-limit`, { task_limit }),
+  getSystemConfig: () => http.get<SystemConfigMap>('/api/admin/system-config'),
+  updateSystemConfig: (values: Record<string, string>) =>
+    http.put<{ ok: boolean }>('/api/admin/system-config', { values }),
 }
