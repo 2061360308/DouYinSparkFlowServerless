@@ -270,6 +270,16 @@ class DouyinQrScanner:
                 cancelled,
                 deadline,
             )
+            if display_name == "抖音账号" or unique_id is None:
+                api_name, api_uid = await self._await_stage(
+                    self._identity_from_account_api(prepared.context),
+                    cancelled,
+                    deadline,
+                )
+                if api_name:
+                    display_name = api_name
+                if api_uid:
+                    unique_id = api_uid
             storage_state = await self._await_stage(
                 prepared.context.storage_state(), cancelled, deadline
             )
@@ -593,6 +603,27 @@ class DouyinQrScanner:
                     value = str(action.get("text", ""))
                     if value.isdigit() and 4 <= len(value) <= 8:
                         await self._type_and_submit_verification_code(page, value)
+                elif isinstance(action, dict) and action.get("kind") == "click_text":
+                    text = str(action.get("text", ""))
+                    if text:
+                        try:
+                            for candidate in await page.get_by_text(
+                                text, exact=True
+                            ).all():
+                                if await candidate.is_visible():
+                                    await candidate.click(timeout=10_000)
+                                    break
+                        except Exception:
+                            pass
+                elif isinstance(action, dict) and action.get("kind") == "click_sel":
+                    selector = str(action.get("selector", ""))
+                    if selector:
+                        try:
+                            locator = page.locator(selector).first
+                            if await locator.count() > 0 and await locator.is_visible():
+                                await locator.click(timeout=10_000)
+                        except Exception:
+                            pass
             png = await page.screenshot(type="png")
             if isinstance(png, bytes) and png.startswith(PNG_SIGNATURE):
                 await _invoke(on_view, png)
@@ -625,6 +656,31 @@ class DouyinQrScanner:
         return False
 
     @staticmethod
+    async def _identity_from_account_api(context) -> tuple[str | None, str | None]:
+        try:
+            response = await context.request.get(ACCOUNT_INFO_URL, timeout=10_000)
+            body = await response.json()
+        except Exception:
+            return None, None
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, dict):
+            return None, None
+        user = data.get("user_info")
+        if not isinstance(user, dict):
+            user = data
+        nickname = (
+            user.get("nickname")
+            or user.get("name")
+            or user.get("screen_name")
+            or user.get("user_name")
+        )
+        unique_id = user.get("unique_id") or user.get("short_id")
+        return (
+            str(nickname) if nickname else None,
+            str(unique_id) if unique_id else None,
+        )
+
+    @staticmethod
     async def _account_session_is_authenticated(context) -> bool:
         try:
             response = await context.request.get(ACCOUNT_INFO_URL, timeout=10_000)
@@ -635,7 +691,7 @@ class DouyinQrScanner:
         return bool(
             isinstance(data, dict)
             and body.get("message") == "success"
-            and data.get("error_code") == 0
+            and not data.get("error_code")
             and data.get("user_id")
         )
 
