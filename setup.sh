@@ -24,10 +24,11 @@
 #
 # 常用环境变量:
 #   CLOAK_CHROMIUM_VERSION=146.0.7680.177.5   浏览器版本（默认同上）
-#   GH_MIRROR=https://gh.07150721.xyz         GitHub 加速前缀（置空则直连官方）
+#   GH_MIRROR=ghproxy.monkeyray.net         GitHub 加速前缀（置空则直连官方）
 #   VENV_DIR=.venv                            虚拟环境目录名
 #   SKILL_NAME=alibabacloud-find-skills       要安装的 Skill 名称
 #   SKILL_DIR=~/.codebuddy/skills/<name>      Skill 安装目录
+
 #   PROXY_NODE=日本高速04                      代理节点（clash 订阅）
 #   PROXY_PORT=7890                           代理混合端口（HTTP/SOCKS5）
 #   MIHOMO_VERSION=v1.19.30                   mihomo 版本

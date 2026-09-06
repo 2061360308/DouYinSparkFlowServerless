@@ -12,6 +12,9 @@ cryptography>=45.0.0
 # 邮件（Resend HTTP，请求内联发送）
 httpx>=0.28.0
 
+# 抖音扫码登录（Playwright 连接远程 CDP 浏览器）
+playwright>=1.40.0
+
 # 计划任务 fc 分支：EventBridge 定时事件源(CreateEventSource/DeleteEventSource)
 alibabacloud-eventbridge20200401>=1.0.0
 
