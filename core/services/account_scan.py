@@ -29,7 +29,7 @@ CHAT_LOGIN_URL = "https://www.douyin.com/chat"
 
 CONFIRMING_TEXT = ("扫码成功", "请在手机上确认", "已扫码")
 VERIFICATION_TEXT = ("安全验证", "请完成验证", "手机验证", "短信验证")
-QR_EXPIRED_TEXT = ("二维码失效",)
+QR_EXPIRED_TEXT = "二维码失效"
 SMS_CODE_INPUT_SELECTORS = (
     'input[placeholder*="验证码"]',
     'input[placeholder*="短信"]',
@@ -264,7 +264,7 @@ class DouyinScanService:
 
         # 二维码过期检测：页面存在包含"二维码失效"文本的 <p> 标签即判定过期
         try:
-            expired_locator = page.locator('p:has-text("二维码失效")').first
+            expired_locator = page.locator(f'p:has-text("{QR_EXPIRED_TEXT}")').first
             if await expired_locator.is_visible(timeout=1_000):
                 return "expired"
         except Exception:  # noqa: BLE001
