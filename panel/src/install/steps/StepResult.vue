@@ -13,18 +13,28 @@ const rows = computed(() => {
   const o = store.deploy.outputs
   if (!o) return [] as Array<{ label: string; value: string; hint?: string }>
   const list: Array<{ label: string; value: string; hint?: string }> = []
-  if (o.EipIpAddress) {
+  if (o.TriggerUrlInternet) {
     list.push({
-      label: '固定公网出口 IP',
-      value: o.EipIpAddress,
-      hint: '对外呈现的固定出口地址（EIP）',
+      label: 'Web 触发器公网地址',
+      value: o.TriggerUrlInternet,
+      hint: 'cloakbrowser 浏览器函数访问入口',
     })
   }
-  if (o.TriggerUrlInternet) {
-    list.push({ label: 'Web 触发器公网地址', value: o.TriggerUrlInternet })
-  }
   if (o.FunctionName) {
-    list.push({ label: '函数名称', value: o.FunctionName })
+    list.push({ label: '浏览器函数名称', value: o.FunctionName })
+  }
+  if (o.TaskTriggerUrlInternet) {
+    list.push({
+      label: '任务执行器触发器地址',
+      value: o.TaskTriggerUrlInternet,
+      hint: 'EventBridge 定时调度调用目标',
+    })
+  }
+  if (o.TaskFunctionName) {
+    list.push({ label: '任务执行器函数名称', value: o.TaskFunctionName })
+  }
+  if (o.EventBusName) {
+    list.push({ label: '事件总线名称', value: o.EventBusName })
   }
   return list
 })

@@ -4,12 +4,12 @@ import { NAlert } from 'naive-ui'
 import { FIXED_PARAMETERS, REGION, STACK_NAME } from '../fields'
 
 const resources: Array<{ name: string; desc: string }> = [
-  { name: 'VPC / 交换机 / 安全组', desc: '专用网络与子网，出网放行' },
-  { name: 'NAT 网关（增强型）', desc: '执行 SNAT，将函数私网流量转出公网' },
-  { name: '弹性公网 IP（EIP）', desc: '固定公网出口 IP，对外呈现的地址' },
-  { name: 'RAM 服务角色', desc: 'FC 承担，挂载日志与网卡管理权限' },
+  { name: 'RAM 服务角色', desc: 'FC 承担，挂载日志访问权限' },
   { name: 'FC3 自定义容器函数', desc: `${FIXED_PARAMETERS.FunctionName}，运行 cloakbrowser 镜像` },
-  { name: 'Web(HTTP) 触发器', desc: '对外提供访问入口' },
+  { name: 'Web(HTTP) 触发器', desc: '对外提供 cloakbrowser 访问入口' },
+  { name: '事件总线（EventBridge）', desc: `${FIXED_PARAMETERS.EventBusName}，供计划任务定时调度` },
+  { name: '续火任务执行器函数', desc: `${FIXED_PARAMETERS.TaskFunctionName}，运行 taskrunner 镜像` },
+  { name: '任务 HTTP 触发器', desc: 'EventBridge 经 Connection 调用任务函数' },
 ]
 </script>
 
@@ -20,7 +20,7 @@ const resources: Array<{ name: string; desc: string }> = [
       <b>{{ REGION }}</b>
       地域，以资源栈
       <b>{{ STACK_NAME }}</b>
-      一键创建以下资源，用于部署 cloakbrowser serverless 浏览器函数：
+      一键创建以下资源，用于部署 cloakbrowser serverless 浏览器函数及续火任务执行器：
     </p>
 
     <ul class="res-list">
@@ -30,20 +30,20 @@ const resources: Array<{ name: string; desc: string }> = [
       </li>
     </ul>
 
-    <n-alert title="固定公网出口 IP 说明" type="success" :bordered="true" class="tip">
-      函数出网被强制走 VPC → NAT → SNAT → EIP，对外呈现的固定公网 IP 即
-      <b>弹性公网 IP（EIP）</b>
-      的地址；NAT 网关只负责转发，最终出口 IP 由 EIP 决定。
+    <n-alert title="公网访问说明" type="success" :bordered="true" class="tip">
+      函数已开启"允许默认网卡访问公网"(
+      <b>InternetAccess: true</b>
+      )，可直接访问公网，无需创建 VPC / NAT / EIP；出网 IP 由函数计算平台动态分配，不固定。
     </n-alert>
 
     <n-alert title="计费提示" type="warning" :bordered="true" class="tip">
-      NAT 网关（按 LCU 计费）与 EIP（默认 5 Mbps，按流量计费）会持续产生费用，删除资源栈即可一并销毁。
+      函数计算 FC、EventBridge 等资源会按实际调用量持续产生费用，删除资源栈即可一并销毁。
     </n-alert>
 
     <n-alert title="前置条件" type="info" :bordered="true" class="tip">
       <ul class="req-list">
         <li>阿里云账号已完成实名认证</li>
-        <li>已开通函数计算 FC、专有网络 VPC、访问控制 RAM、NAT 网关等服务</li>
+        <li>已开通函数计算 FC、访问控制 RAM、事件总线 EventBridge 等服务</li>
         <li>准备一对具备上述资源创建权限的 AccessKey（下一步填写）</li>
       </ul>
     </n-alert>

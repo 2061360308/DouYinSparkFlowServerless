@@ -25,12 +25,24 @@ const themeOverrides: GlobalThemeOverrides = {
 </script>
 
 <template>
-  <n-config-provider :theme="theme" :theme-overrides="themeOverrides">
+  <n-config-provider
+    class="h-full"
+    :theme="theme"
+    :theme-overrides="themeOverrides"
+  >
     <n-global-style />
-    <n-message-provider>
-      <n-dialog-provider>
-        <router-view />
+    <n-message-provider class="h-full">
+      <n-dialog-provider class="h-full">
+        <div class="h-full">
+          <router-view />
+        </div>
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>
 </template>
+
+<style>
+.h-full {
+  height: 100%;
+}
+</style>

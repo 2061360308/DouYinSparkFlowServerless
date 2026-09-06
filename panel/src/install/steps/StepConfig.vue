@@ -21,6 +21,7 @@ import {
   CPU_STEP,
   DISK_OPTIONS,
   MEMORY_STEP,
+  TASK_MEMORY_FLOOR,
   TIMEOUT_MAX,
   TIMEOUT_MIN,
   clampMemory,
@@ -33,6 +34,7 @@ const formRef = ref<FormInst | null>(null)
 const diskOptions = DISK_OPTIONS.map((v) => ({ label: `${v} MB`, value: v }))
 
 const memBounds = computed(() => memoryBounds(store.spec.Cpu))
+const taskMemBounds = computed(() => memoryBounds(store.spec.TaskCpu, TASK_MEMORY_FLOOR))
 
 const akIdRule: FormItemRule = {
   required: true,
@@ -73,11 +75,37 @@ const memRule = computed<FormItemRule>(() => ({
   },
 }))
 
+const taskMemRule = computed<FormItemRule>(() => ({
+  type: 'number',
+  required: true,
+  trigger: ['change', 'blur'],
+  validator: (_rule: FormItemRule, value: number | null): true | Error => {
+    const { min, max } = taskMemBounds.value
+    if (value == null || Number.isNaN(value)) return new Error('请输入内存大小')
+    if (value % MEMORY_STEP !== 0) return new Error(`内存需为 ${MEMORY_STEP}MB 的倍数`)
+    if (value < min || value > max) {
+      return new Error(`内存需在 ${min}~${max} MB 之间（vCPU:GB = 1:1~1:4）`)
+    }
+    return true
+  },
+}))
+
 // Cpu 变化时，把内存夹取回合法区间，避免比例越界。
 watch(
   () => store.spec.Cpu,
   () => {
     store.spec.MemorySize = clampMemory(store.spec.Cpu, store.spec.MemorySize)
+  },
+)
+
+watch(
+  () => store.spec.TaskCpu,
+  () => {
+    store.spec.TaskMemorySize = clampMemory(
+      store.spec.TaskCpu,
+      store.spec.TaskMemorySize,
+      TASK_MEMORY_FLOOR,
+    )
   },
 )
 
@@ -144,7 +172,7 @@ defineExpose({ validate })
     </n-grid>
 
     <n-collapse class="advanced">
-      <n-collapse-item title="高级：函数规格" name="spec">
+      <n-collapse-item title="高级：浏览器函数规格" name="spec">
         <n-grid :cols="2" :x-gap="16" responsive="screen" item-responsive>
           <n-gi span="2 s:1">
             <n-form-item label="CPU（vCPU）" path="spec.Cpu" :rule="cpuRule">
@@ -191,6 +219,56 @@ defineExpose({ validate })
         <p class="hint">
           当前 CPU 下内存可选范围：{{ memBounds.min }}~{{ memBounds.max }} MB（64MB 倍数，
           vCPU:GB = 1:1~1:4）。会话亲和、健康检查、镜像、触发器等其余参数均采用固定默认值。
+        </p>
+      </n-collapse-item>
+
+      <n-collapse-item title="高级：任务执行器函数规格" name="task-spec">
+        <n-grid :cols="2" :x-gap="16" responsive="screen" item-responsive>
+          <n-gi span="2 s:1">
+            <n-form-item label="CPU（vCPU）" path="spec.TaskCpu" :rule="cpuRule">
+              <n-input-number
+                v-model:value="store.spec.TaskCpu"
+                :min="CPU_MIN"
+                :max="CPU_MAX"
+                :step="CPU_STEP"
+                :precision="2"
+                class="fill"
+              />
+            </n-form-item>
+          </n-gi>
+          <n-gi span="2 s:1">
+            <n-form-item label="内存（MB）" path="spec.TaskMemorySize" :rule="taskMemRule">
+              <n-input-number
+                v-model:value="store.spec.TaskMemorySize"
+                :min="taskMemBounds.min"
+                :max="taskMemBounds.max"
+                :step="MEMORY_STEP"
+                :precision="0"
+                class="fill"
+              />
+            </n-form-item>
+          </n-gi>
+          <n-gi span="2 s:1">
+            <n-form-item label="磁盘（MB）">
+              <n-input value="512" readonly />
+            </n-form-item>
+          </n-gi>
+          <n-gi span="2 s:1">
+            <n-form-item label="函数超时（秒）" path="spec.TaskFunctionTimeout">
+              <n-input-number
+                v-model:value="store.spec.TaskFunctionTimeout"
+                :min="TIMEOUT_MIN"
+                :max="TIMEOUT_MAX"
+                :step="1"
+                :precision="0"
+                class="fill"
+              />
+            </n-form-item>
+          </n-gi>
+        </n-grid>
+        <p class="hint">
+          当前 CPU 下内存可选范围：{{ taskMemBounds.min }}~{{ taskMemBounds.max }} MB（64MB
+          倍数）。任务执行器磁盘固定 512MB，其余参数均采用固定默认值。
         </p>
       </n-collapse-item>
     </n-collapse>

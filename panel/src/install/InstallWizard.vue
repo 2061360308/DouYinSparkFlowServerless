@@ -138,7 +138,10 @@ function reinstall(): void {
 
 <style scoped>
 .wizard-shell {
-  min-height: 100svh;
+  /* 固定占满整个视口，不依赖父元素高度链；内容超出时内部滚动 */
+  position: fixed;
+  inset: 0;
+  overflow: auto;
   display: flex;
   align-items: flex-start;
   justify-content: center;

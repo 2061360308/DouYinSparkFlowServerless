@@ -30,14 +30,26 @@ export interface StackEvent {
 }
 
 export interface StackOutputs {
-  /** 固定公网出口 IP（EIP 地址，模板输出 EipIpAddress）。 */
-  EipIpAddress?: string
   /** Web 触发器公网访问地址。 */
   TriggerUrlInternet?: string
   /** Web 触发器内网访问地址。 */
   TriggerUrlIntranet?: string
-  /** 函数名称。 */
+  /** 浏览器函数名称。 */
   FunctionName?: string
+  /** EventBridge 事件总线名称。 */
+  EventBusName?: string
+  /** 续火任务执行器函数名称。 */
+  TaskFunctionName?: string
+  /** 续火任务执行器 HTTP 触发器公网地址。 */
+  TaskTriggerUrlInternet?: string
+  /** 定时调度规则名称。 */
+  ScheduleRuleName?: string
+  /** 定时调度规则 ARN。 */
+  ScheduleRuleARN?: string
+  /** EventBridge API 端点名称。 */
+  ApiDestinationName?: string
+  /** EventBridge 连接配置名称。 */
+  ConnectionName?: string
 }
 
 export interface DeployStatus {
@@ -65,34 +77,25 @@ const runs = new Map<string, MockRun>()
 
 /** 资源创建阶段（顺序与 ros-template.yaml 的资源依赖大致一致）。 */
 const STAGES: ReadonlyArray<{ id: string; type: string }> = [
-  { id: 'Vpc', type: 'ALIYUN::ECS::VPC' },
-  { id: 'VSwitch', type: 'ALIYUN::ECS::VSwitch' },
-  { id: 'SecurityGroup', type: 'ALIYUN::ECS::SecurityGroup' },
-  { id: 'NatGateway', type: 'ALIYUN::VPC::NatGateway' },
-  { id: 'Eip', type: 'ALIYUN::VPC::EIP' },
-  { id: 'SnatEntry', type: 'ALIYUN::VPC::SnatEntry' },
   { id: 'Role', type: 'ALIYUN::RAM::Role' },
+  { id: 'LogPolicy', type: 'ALIYUN::RAM::AttachPolicyToRole' },
   { id: 'Function', type: 'ALIYUN::FC3::Function' },
   { id: 'WebTrigger', type: 'ALIYUN::FC3::Trigger' },
+  { id: 'EventBus', type: 'ALIYUN::EventBridge::EventBus' },
+  { id: 'TaskFunction', type: 'ALIYUN::FC3::Function' },
+  { id: 'TaskTrigger', type: 'ALIYUN::FC3::Trigger' },
+  { id: 'EventBridgeConnection', type: 'ALIYUN::EventBridge::Connection' },
+  { id: 'EventBridgeApiDestination', type: 'ALIYUN::EventBridge::ApiDestination' },
+  { id: 'ScheduleRule', type: 'ALIYUN::EventBridge::Rule' },
 ]
 
 /** 资源阶段总数（供前端计算进度百分比）。 */
 export const TOTAL_RESOURCE_STAGES = STAGES.length
 
-const STAGE_MS = 1500 // 每个资源阶段的模拟耗时
+const STAGE_MS = 1200 // 每个资源阶段的模拟耗时
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** 由 stackId 派生一个稳定的伪公网 IP（仅用于 mock 展示）。 */
-function mockPublicIp(seed: string): string {
-  let h = 0
-  for (let i = 0; i < seed.length; i++) {
-    h = (h * 31 + seed.charCodeAt(i)) >>> 0
-  }
-  const byte = (n: number) => (h >>> (n * 8)) & 0xff
-  return `47.${byte(0)}.${byte(1)}.${(byte(2) % 254) + 1}`
 }
 
 /** 发起创建资源栈，同步返回 stackId（对应 create_stack）。 */
@@ -133,11 +136,19 @@ export async function getDeployStatus(stackId: string): Promise<DeployStatus> {
 
   const params = run.request.parameters
   const functionName = params.FunctionName || 'DYSparkCloakBrowser'
+  const taskFunctionName = params.TaskFunctionName || 'DYSparkTaskRunner'
+  const region = run.request.region
   const outputs: StackOutputs = {
-    EipIpAddress: mockPublicIp(stackId),
-    TriggerUrlInternet: `https://${functionName.toLowerCase()}-mockuid.${run.request.region}.fcapp.run`,
-    TriggerUrlIntranet: `https://${functionName.toLowerCase()}-mockuid.${run.request.region}-internal.fcapp.run`,
+    TriggerUrlInternet: `https://${functionName.toLowerCase()}-mockuid.${region}.fcapp.run`,
+    TriggerUrlIntranet: `https://${functionName.toLowerCase()}-mockuid.${region}-internal.fcapp.run`,
     FunctionName: functionName,
+    EventBusName: params.EventBusName || 'DouyinSpark-bus',
+    TaskFunctionName: taskFunctionName,
+    TaskTriggerUrlInternet: `https://${taskFunctionName.toLowerCase()}-mockuid.${region}.fcapp.run`,
+    ScheduleRuleName: params.RuleName || 'DouyinSpark-schedule',
+    ScheduleRuleARN: `acs:eventbridge:${region}:${stackId}:rule/${params.EventBusName || 'DouyinSpark-bus'}/${params.RuleName || 'DouyinSpark-schedule'}`,
+    ApiDestinationName: params.ApiDestinationName || 'DouyinSpark-fc-dest',
+    ConnectionName: params.ConnectionName || 'DouyinSpark-fc-conn',
   }
   return { stackId, status: 'CREATE_COMPLETE', events, outputs }
 }
