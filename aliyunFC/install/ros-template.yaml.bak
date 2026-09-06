@@ -1,11 +1,13 @@
 ROSTemplateFormatVersion: '2015-09-01'
 Description:
   zh-cn: >-
-    cloakbrowser-serverless 全量部署模板: RAM 服务角色 + FC3 自定义容器函数(开启 HEADER_FIELD
-    会话亲和, 允许默认网卡访问公网) + Web 触发器 + EventBridge 事件总线(计划任务定时调度)。默认地域 cn-hangzhou。
+    cloakbrowser-serverless 全量部署模板: 新建 VPC/交换机/安全组 + NAT 网关/
+    EIP(固定公网出口)/SNAT + RAM 服务角色 + FC3 自定义容器函数(开启 HEADER_FIELD
+    会话亲和) + Web 触发器 + EventBridge 事件总线(计划任务定时调度)。镜像与 EIP 出口均在同一地域, 默认 cn-hangzhou。
   en: >
-    Full cloakbrowser-serverless stack: RAM service role + FC3 custom-container function
-    (HEADER_FIELD session affinity, internet access enabled) + HTTP trigger.
+    Full cloakbrowser-serverless stack: VPC/VSwitch/SecurityGroup + NAT gateway /
+    EIP(fixed egress)/SNAT + RAM service role + FC3 custom-container function
+    (HEADER_FIELD session affinity) + HTTP trigger.
 
 Parameters:
   # ===========================================================================
@@ -18,8 +20,53 @@ Parameters:
       zh-cn: 资源名称前缀
       en: Resource name prefix
     Description:
-      zh-cn: "资源名称前缀。注意: 角色名/函数名需在账号内全局唯一, 若已存在请修改。"
+      zh-cn: "VPC/NAT/EIP/安全组等资源名称前缀。注意: 角色名/函数名需在账号内全局唯一, 若已存在请修改。"
       en: Prefix for resource names. Role/function names must be account-unique.
+  ZoneId:
+    Type: String
+    Default: cn-hangzhou-b
+    Label:
+      zh-cn: 交换机可用区
+      en: Availability zone
+    Description:
+      zh-cn: 交换机可用区, 需属于所选地域。
+      en: VSwitch zone, must belong to the selected region.
+  VpcCidrBlock:
+    Type: String
+    Default: 172.16.0.0/16
+    Label:
+      zh-cn: VPC 网段
+      en: VPC CIDR
+  VSwitchCidrBlock:
+    Type: String
+    Default: 172.16.0.0/24
+    Label:
+      zh-cn: 交换机网段
+      en: VSwitch CIDR
+
+  # ===========================================================================
+  # EIP / 公网出口参数
+  # ===========================================================================
+  EipBandwidth:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    MaxValue: 200
+    Label:
+      zh-cn: EIP 带宽 (Mbps)
+      en: EIP bandwidth (Mbps)
+  EipInternetChargeType:
+    Type: String
+    Default: PayByTraffic
+    AllowedValues:
+      - PayByTraffic
+      - PayByBandwidth
+    Label:
+      zh-cn: EIP 计费方式
+      en: EIP metering
+    Description:
+      zh-cn: PayByTraffic 按流量 / PayByBandwidth 按固定带宽。
+      en: PayByTraffic / PayByBandwidth.
 
   # ===========================================================================
   # 函数参数
@@ -293,6 +340,120 @@ Parameters:
 
 Resources:
   # ===========================================================================
+  # 网络: VPC + 交换机 + 安全组
+  # ===========================================================================
+  Vpc:
+    Type: ALIYUN::ECS::VPC
+    Properties:
+      CidrBlock:
+        Ref: VpcCidrBlock
+      VpcName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - vpc
+      Description: cloakbrowser dedicated vpc
+
+  VSwitch:
+    Type: ALIYUN::ECS::VSwitch
+    Properties:
+      ZoneId:
+        Ref: ZoneId
+      CidrBlock:
+        Ref: VSwitchCidrBlock
+      VpcId:
+        Ref: Vpc
+      VSwitchName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - vswitch
+      Description: cloakbrowser function vswitch
+
+  SecurityGroup:
+    Type: ALIYUN::ECS::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: Vpc
+      SecurityGroupName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - sg
+      Description: cloakbrowser fc3 function security group
+      SecurityGroupEgress:
+        - IpProtocol: all
+          PortRange: -1/-1
+          NicType: intranet
+          DestCidrIp: 0.0.0.0/0
+          Policy: accept
+          Priority: 1
+
+  # ===========================================================================
+  # 公网: NAT 网关 + EIP + 关联 + SNAT (固定公网出口 IP)
+  # ===========================================================================
+  NatGateway:
+    Type: ALIYUN::VPC::NatGateway
+    Properties:
+      VpcId:
+        Ref: Vpc
+      VSwitchId:
+        Ref: VSwitch
+      NatType: Enhanced
+      NetworkType: internet
+      InternetChargeType: PayByLcu
+      NatGatewayName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - nat
+      Description: cloakbrowser fixed egress
+
+  Eip:
+    Type: ALIYUN::VPC::EIP
+    Properties:
+      Bandwidth:
+        Ref: EipBandwidth
+      InternetChargeType:
+        Ref: EipInternetChargeType
+      Isp: BGP
+      Name:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - eip
+
+  EipAssociation:
+    Type: ALIYUN::VPC::EIPAssociation
+    Properties:
+      AllocationId:
+        Ref: Eip
+      InstanceId:
+        Ref: NatGateway
+      Mode: NAT
+
+  SnatEntry:
+    Type: ALIYUN::VPC::SnatEntry
+    DependsOn:
+      - EipAssociation
+    Properties:
+      SnatTableId:
+        Fn::GetAtt:
+          - NatGateway
+          - SNatTableId
+      SourceVSwitchIds:
+        - Ref: VSwitch
+      SnatIp:
+        Fn::GetAtt:
+          - Eip
+          - EipAddress
+      SnatEntryName:
+        Fn::Join:
+          - '-'
+          - - Ref: NamePrefix
+            - snat
+
+  # ===========================================================================
   # RAM 角色: FC 服务角色 (fc.aliyuncs.com 承担) + 系统策略
   # ===========================================================================
   Role:
@@ -321,6 +482,14 @@ Resources:
       RoleName:
         Ref: Role
 
+  EniPolicy:
+    Type: ALIYUN::RAM::AttachPolicyToRole
+    Properties:
+      PolicyName: AliyunECSNetworkInterfaceManagementAccess
+      PolicyType: System
+      RoleName:
+        Ref: Role
+
   # ===========================================================================
   # FC3 函数 (自定义容器) + Web(HTTP) 触发器
   # ===========================================================================
@@ -328,6 +497,7 @@ Resources:
     Type: ALIYUN::FC3::Function
     DependsOn:
       - LogPolicy
+      - EniPolicy
     Properties:
       FunctionName:
         Ref: FunctionName
@@ -343,7 +513,7 @@ Resources:
       Timeout:
         Ref: FunctionTimeout
       InstanceConcurrency: 200
-      InternetAccess: true
+      InternetAccess: false
       Role:
         Fn::GetAtt:
           - Role
@@ -376,6 +546,13 @@ Resources:
             Ref: HealthTimeoutSeconds
           SuccessThreshold: 1
           FailureThreshold: 3
+      VpcConfig:
+        VpcId:
+          Ref: Vpc
+        VSwitchIds:
+          - Ref: VSwitch
+        SecurityGroupId:
+          Ref: SecurityGroup
       LogConfig:
         LogBeginRule: None
       Tags:
@@ -436,7 +613,6 @@ Resources:
       Timeout:
         Ref: TaskFunctionTimeout
       InstanceConcurrency: 1
-      InternetAccess: true
       Role:
         Fn::GetAtt:
           - Role
@@ -563,6 +739,32 @@ Resources:
               Value: ''
 
 Outputs:
+  EipId:
+    Description: 固定公网出口 IP 的 EIP 实例 ID
+    Value:
+      Ref: Eip
+  EipIpAddress:
+    Description: 固定公网出口公网 IP 地址
+    Value:
+      Fn::GetAtt:
+        - Eip
+        - EipAddress
+  NatGatewayId:
+    Description: NAT 网关 ID
+    Value:
+      Ref: NatGateway
+  VpcId:
+    Description: VPC ID
+    Value:
+      Ref: Vpc
+  VSwitchId:
+    Description: 交换机 ID
+    Value:
+      Ref: VSwitch
+  SecurityGroupId:
+    Description: 安全组 ID
+    Value:
+      Ref: SecurityGroup
   TriggerUrlInternet:
     Description: Web 触发器公网访问地址
     Value:

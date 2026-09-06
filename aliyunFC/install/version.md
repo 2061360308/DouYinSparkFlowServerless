@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.4.0 (2026-09-06)
+
+- 移除 VPC/NAT/EIP/SNAT 等固定公网出口相关资源与参数, 不再创建专有网络、NAT 网关和弹性公网 IP
+- 函数网络改为默认网卡直接访问公网: `InternetAccess: true`, 出网 IP 不再固定
+- ROS 模板新增续火任务执行器函数 `DYSparkTaskRunner` 及配套 EventBridge 定时调度资源(EventBus/Connection/ApiDestination/Rule)
+- panel 引导安装页同步更新: 展示 cloakbrowser 函数 + taskrunner 函数, 移除固定公网 IP 说明与 VPC/EIP 配置项
+- 更新 readme.md / version.md / ros_client.py / panel 字段与输出类型, 移除所有 EIP/VPC/NAT 相关引用
+
 ## 0.3.1 (2026-09-05)
 
 - 修复健康检查路径: 应用健康端点是 `GET /`(恒 200), 原默认 `/healthz` 无路由导致 FC 健康检查失败、实例无法唤醒(`FunctionNotStarted`/412), 默认值改为 `/`

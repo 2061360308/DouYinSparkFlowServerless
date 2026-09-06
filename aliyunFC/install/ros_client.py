@@ -5,7 +5,7 @@
 2. get_stack_status(...)    -> 单次查询资源栈状态
    wait_stack_complete(...) -> 轮询直到终态: 成功返回/失败抛 StackFailedError(含失败资源原因)
 3. get_trigger_url(...)     -> 创建完成后取 Web 触发器公网访问地址
-   get_stack_outputs(...)   -> 全部 outputs (含 EipIpAddress 等)
+   get_stack_outputs(...)   -> 全部 outputs (TriggerUrlInternet / TaskTriggerUrlInternet / FunctionName 等)
 
 本模块为同步实现, 若后端基于异步框架 (FastAPI 等) 可直接用
 asyncio.to_thread 包裹调用。
@@ -28,7 +28,7 @@ asyncio.to_thread 包裹调用。
     stack_id = client.create_stack(
         template_body=Path("ros-template.yaml").read_text(encoding="utf-8"),
         stack_name="DouyinSpark",
-        parameters={"EipBandwidth": "5"},
+        parameters={"Cpu": "1", "MemorySize": "1536"},
     )
 
     # ② 轮询创建状态 (失败抛异常, 自动带失败资源原因)
@@ -300,8 +300,9 @@ class RosStackClient:
     def get_stack_outputs(self, stack_id: str) -> Dict[str, str]:
         """返回资源栈全部输出 {OutputKey: OutputValue}。
 
-        本模板包含: EipId / EipIpAddress / NatGatewayId / VpcId / VSwitchId /
-        SecurityGroupId / TriggerUrlInternet / TriggerUrlIntranet / FunctionName。
+        本模板包含: TriggerUrlInternet / TriggerUrlIntranet / FunctionName /
+        EventBusName / TaskFunctionName / TaskTriggerUrlInternet /
+        ScheduleRuleName / ScheduleRuleARN / ApiDestinationName / ConnectionName。
         """
         info = self.get_stack_status(stack_id)
         outputs: Dict[str, str] = {}
