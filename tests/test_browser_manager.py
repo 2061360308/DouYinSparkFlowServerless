@@ -8,6 +8,8 @@ import os
 import shutil
 import tempfile
 import unittest
+import base64
+from unittest.mock import patch
 
 # 必须在导入 db 之前指定隔离用的临时数据库
 _TMP_DB = "test_browser_tmp.sqlite3"
@@ -78,6 +80,9 @@ async def _get_meta(sessionid):
 
 class TestBrowserManager(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        key_env = patch.dict(os.environ, {'SPARK_COOKIE_KEY_B64': base64.b64encode(b'b' * 32).decode()})
+        key_env.start()
+        self.addCleanup(key_env.stop)
         from core.db.init_db import init_db
         await init_db()
         await _clear_rows()

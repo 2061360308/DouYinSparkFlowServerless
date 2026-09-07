@@ -99,6 +99,8 @@ class RunItem(BaseModel):
     error_code: str | None
     error_summary: str | None
     owner_username: str | None = None
+    delivery_level: str = 'unknown'
+    delivery_observed_at: str | None = None
 
 
 class Pagination(BaseModel):
@@ -253,7 +255,10 @@ class ScanVerifyCodeResponse(BaseModel):
 
 class SystemConfigResponse(BaseModel):
     values: dict[str, str]
+    secret_configured: dict[str, bool]
+    installation_credentials_active: bool = False
 
 
 class SystemConfigUpdateBody(BaseModel):
     values: dict[str, str]
+    clear_secret_keys: list[str] = []

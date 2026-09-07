@@ -51,6 +51,16 @@ class TaskCapacityService:
     def __init__(self, audit: AuditService | None = None):
         self.audit = audit or AuditService()
 
+    async def lock_admission(self) -> None:
+        """Inside a short write transaction, before checking capacity or slots.
+
+        Slots are global, so every task writer uses the policy singleton as the
+        cross-process lock. Lock order: policy -> schedule job -> business task.
+        SQLite serializes the enclosing write transaction instead.
+        """
+        if not await TaskQuotaPolicy.filter(id=1).select_for_update().first():
+            raise ValidationError('任务额度策略尚未初始化')
+
     async def policy(self) -> TaskQuotaPolicy:
         policy = await TaskQuotaPolicy.get_or_none(id=1)
         if policy is None:

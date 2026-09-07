@@ -70,6 +70,8 @@ export interface Availability {
 }
 
 export interface RunItem {
+  delivery_level?: string
+  delivery_observed_at?: string | null
   id: string
   task_id: string
   target_name: string | null
@@ -152,6 +154,7 @@ export const accountApi = {
     http.post<{ id: string; display_name: string }>('/api/accounts', { display_name, cookies }),
   remove: (id: string) => http.del<{ ok: boolean }>(`/api/accounts/${id}`),
   conversations: (id: string) => http.get<{ items: ConversationItem[] }>(`/api/accounts/${id}/conversations`),
+  syncConversations: (id: string) => http.post<{ updated: number }>(`/api/accounts/${id}/conversations/sync`),
 }
 
 export const taskApi = {
@@ -181,6 +184,8 @@ export const dashboardApi = {
 
 export interface SystemConfigMap {
   values: Record<string, string>
+  secret_configured: Record<string, boolean>
+  installation_credentials_active: boolean
 }
 
 export const adminApi = {
@@ -206,6 +211,6 @@ export const adminApi = {
   setTaskLimit: (id: string, task_limit: number) =>
     http.post<{ ok: boolean }>(`/api/admin/users/${id}/task-limit`, { task_limit }),
   getSystemConfig: () => http.get<SystemConfigMap>('/api/admin/system-config'),
-  updateSystemConfig: (values: Record<string, string>) =>
-    http.put<{ ok: boolean }>('/api/admin/system-config', { values }),
+  updateSystemConfig: (values: Record<string, string>, clear_secret_keys: string[] = []) =>
+    http.put<{ ok: boolean }>('/api/admin/system-config', { values, clear_secret_keys }),
 }

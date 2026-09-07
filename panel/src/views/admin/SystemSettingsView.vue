@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  NAlert,
+  NCheckbox,
   NButton,
   NCard,
   NForm,
@@ -57,6 +59,18 @@ const router = useRouter()
 const loading = ref(true)
 const saving = ref(false)
 const values = ref<Record<string, string>>({})
+const configured = ref<Record<string, boolean>>({})
+const clearSecrets = ref<string[]>([])
+const installationCredentialsActive = ref(false)
+const loaded = ref(false)
+
+function markClear(key: string, checked: boolean) {
+  clearSecrets.value = clearSecrets.value.filter((item) => item !== key)
+  if (checked) {
+    clearSecrets.value.push(key)
+    values.value[key] = ''
+  }
+}
 
 const groups = computed<GroupMeta[]>(() => [
   {
@@ -102,7 +116,7 @@ const groups = computed<GroupMeta[]>(() => [
       {
         key: 'platform_access_key_id',
         label: '平台 AccessKey ID',
-        type: 'string',
+        type: 'password',
         description: 'AssumeRole 发起方的 AK',
       },
       {
@@ -351,9 +365,14 @@ function setFieldValue(key: string, type: FieldType, value: string | number | bo
 
 async function load() {
   loading.value = true
+  loaded.value = false
   try {
     const res = await adminApi.getSystemConfig()
     values.value = { ...res.values }
+    configured.value = res.secret_configured
+    installationCredentialsActive.value = res.installation_credentials_active
+    clearSecrets.value = []
+    loaded.value = true
   } catch {
     message.error('加载系统配置失败')
   } finally {
@@ -377,11 +396,14 @@ function validate(): boolean {
 }
 
 async function save() {
+  if (!loaded.value || loading.value || saving.value) return
   if (!validate()) return
   saving.value = true
   try {
-    await adminApi.updateSystemConfig({ ...values.value })
-    message.success('系统配置已保存')
+    await adminApi.updateSystemConfig({ ...values.value }, clearSecrets.value)
+    for (const key of Object.keys(configured.value)) values.value[key] = ''
+    message.success('配置已保存；已有云资源不会自动重新部署')
+    await load()
   } catch {
     message.error('保存失败')
   } finally {
@@ -396,13 +418,17 @@ onMounted(load)
   <div class="system-settings">
     <n-page-header title="系统设置" @back="router.push({ name: 'dashboard' })">
       <template #extra>
-        <n-button type="primary" :loading="saving" @click="save">保存配置</n-button>
+        <n-button type="primary" :disabled="!loaded || loading" :loading="saving" @click="save">保存配置</n-button>
       </template>
     </n-page-header>
 
     <n-spin :show="loading">
       <div class="settings-body">
-        <n-form label-placement="top" require-mark-placement="right-hanging">
+        <n-alert type="info" style="margin-bottom: 16px">
+          密钥仅显示是否已配置，留空保留原值。保存配置不会重新部署资源；修复调度配置后，请在任务页重试同步。
+          <template v-if="installationCredentialsActive">当前运行优先使用安装向导保存的云凭据，此处平台 AK/SK 是备用配置，修改它们不会替换安装凭据。</template>
+        </n-alert>
+        <n-form :disabled="saving || loading" label-placement="top" require-mark-placement="right-hanging">
           <n-card
             v-for="group in groups"
             :key="group.key"
@@ -440,9 +466,10 @@ onMounted(load)
                     v-else-if="field.type === 'password'"
                     type="password"
                     show-password-on="click"
+                    :disabled="clearSecrets.includes(field.key) || saving || loading"
                     :value="String(getFieldValue(field.key, field.type))"
                     @update:value="(v) => setFieldValue(field.key, field.type, v)"
-                    :placeholder="field.description"
+                    :placeholder="configured[field.key] ? '已配置，留空保持不变' : '尚未配置'"
                   />
 
                   <n-input
@@ -480,6 +507,10 @@ onMounted(load)
                     />
                     <n-text depth="3">{{ field.description }}</n-text>
                   </n-space>
+                  <n-checkbox v-if="field.type === 'password' && configured[field.key]"
+                    :checked="clearSecrets.includes(field.key)"
+                    @update:checked="(checked) => markClear(field.key, checked)"
+                  >保存时清除</n-checkbox>
                 </n-form-item>
               </n-gi>
             </n-grid>
@@ -488,7 +519,7 @@ onMounted(load)
 
         <n-space justify="end" class="footer-actions">
           <n-button @click="router.push({ name: 'dashboard' })">取消</n-button>
-          <n-button type="primary" :loading="saving" @click="save">保存配置</n-button>
+          <n-button type="primary" :disabled="!loaded || loading" :loading="saving" @click="save">保存配置</n-button>
         </n-space>
       </div>
     </n-spin>

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from tortoise.exceptions import IntegrityError
+from core.db.transactions import write_transaction as in_transaction
 
 from core.db.models import (
     DouyinContactIdentity,
@@ -21,7 +22,7 @@ from core.services import Conflict, NotFound, ValidationError
 from core.services.accounts import AccountService
 from core.services.audit import AuditService
 from core.services.task_capacity import TaskCapacityService
-from core.services.task_scheduling import sync_task, delete_task
+from core.services.task_scheduling import enqueue, process_job, delete_task, lock_for_change
 
 
 _TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -67,6 +68,8 @@ class TaskService:
         return target, message
 
     async def _assert_target_belongs(self, account_id: str, sec_uid: str) -> None:
+        if not sec_uid:
+            raise ValidationError('请从已同步好友列表选择带稳定 ID 的好友')
         if sec_uid and not await DouyinContactIdentity.filter(
             account_id=account_id, sec_uid=sec_uid
         ).exists():
@@ -81,26 +84,28 @@ class TaskService:
         owner = await User.get_or_none(id=owner_id)
         if owner is None:
             raise NotFound("user not found")
-        await self.capacity.assert_can_create(owner)
-        await self.capacity.assert_slot_available(send_time)
         stable_target = str(target_sec_uid or "").strip()
         await self._assert_target_belongs(account.id, stable_target)
         try:
-            task = await SparkTask.create(
-                owner_user_id=owner_id,
-                douyin_account_id=account.id,
-                target_name=target,
-                send_time=send_time,
-                message_template=message,
-                enabled=True,
-                next_run_at=_next_run_at(send_time),
-            )
-            if stable_target:
+            async with in_transaction():
+                await self.capacity.lock_admission()
+                await self.capacity.assert_can_create(owner)
+                await self.capacity.assert_slot_available(send_time)
+                task = await SparkTask.create(
+                    owner_user_id=owner_id,
+                    douyin_account_id=account.id,
+                    target_name=target,
+                    send_time=send_time,
+                    message_template=message,
+                    enabled=True,
+                    next_run_at=_next_run_at(send_time),
+                )
                 await SparkTaskTargetIdentity.create(task_id=task.id, sec_uid=stable_target)
+                await enqueue(task.id)
         except IntegrityError as error:
             raise Conflict("相同账号、好友和时间的启用任务已存在") from error
         await self.audit.write(owner_id, "task.created", "spark_task", task.id)
-        await sync_task(task.id)
+        await process_job(task.id)
         return task
 
     async def set_enabled_owned(self, owner_id: str, task_id: str, enabled: bool) -> SparkTask:
@@ -108,24 +113,30 @@ class TaskService:
         return await self.set_enabled(task, enabled, owner_id)
 
     async def set_enabled(self, task: SparkTask, enabled: bool, actor_id: str) -> SparkTask:
-        if enabled and task.douyin_account_id is None:
-            raise ValidationError("账号已删除，无法启用任务")
-        if enabled and not task.enabled:
-            owner = await User.get_or_none(id=task.owner_user_id)
-            if owner is None:
-                raise NotFound("user not found")
-            await self.capacity.assert_can_enable(owner)
-            await self.capacity.assert_slot_available(task.send_time, task.id)
-        task.enabled = enabled
-        task.next_run_at = _next_run_at(task.send_time) if enabled else None
         try:
-            await task.save(update_fields=["enabled", "next_run_at", "updated_at"])
+            async with in_transaction():
+                await self.capacity.lock_admission()
+                await lock_for_change(task.id)
+                await task.refresh_from_db()
+                if enabled:
+                    if task.douyin_account_id is None:
+                        raise ValidationError('账号已删除，无法启用任务')
+                    binding = await SparkTaskTargetIdentity.get_or_none(task_id=task.id)
+                    await self._assert_target_belongs(task.douyin_account_id, binding.sec_uid if binding else '')
+                    if not task.enabled:
+                        owner = await User.get(id=task.owner_user_id)
+                        await self.capacity.assert_can_enable(owner)
+                    await self.capacity.assert_slot_available(task.send_time, task.id)
+                task.enabled = enabled
+                task.next_run_at = _next_run_at(task.send_time) if enabled else None
+                await task.save(update_fields=["enabled", "next_run_at", "updated_at"])
+                await enqueue(task.id)
         except IntegrityError as error:
             raise Conflict("相同账号、好友和时间的启用任务已存在") from error
         await self.audit.write(
             actor_id, "task.enabled" if enabled else "task.disabled", "spark_task", task.id
         )
-        await sync_task(task.id)
+        await process_job(task.id)
         return task
 
     async def update_owned(
@@ -137,32 +148,22 @@ class TaskService:
         account = await self.accounts.get_owned(owner_id, account_id)
         stable_target = str(target_sec_uid or "").strip()
         await self._assert_target_belongs(account.id, stable_target)
-        if task.enabled:
-            await self.capacity.assert_slot_available(send_time, task.id)
-            duplicate = await SparkTask.filter(
-                douyin_account_id=account.id, target_name=target,
-                send_time=send_time, enabled=True,
-            ).exclude(id=task.id).exists()
-            if duplicate:
-                raise Conflict("相同账号、好友和时间的启用任务已存在")
-        task.douyin_account_id = account.id
-        task.target_name = target
-        task.send_time = send_time
-        task.message_template = message
-        task.next_run_at = _next_run_at(send_time)
-        await task.save()
-
-        binding = await SparkTaskTargetIdentity.get_or_none(task_id=task.id)
-        if stable_target:
-            if binding is None:
-                await SparkTaskTargetIdentity.create(task_id=task.id, sec_uid=stable_target)
-            else:
-                binding.sec_uid = stable_target
-                await binding.save(update_fields=["sec_uid"])
-        elif binding is not None:
-            await binding.delete()
+        async with in_transaction():
+            await self.capacity.lock_admission()
+            await lock_for_change(task.id)
+            await task.refresh_from_db()
+            if task.enabled:
+                await self.capacity.assert_slot_available(send_time, task.id)
+            task.douyin_account_id = account.id
+            task.target_name = target
+            task.send_time = send_time
+            task.message_template = message
+            task.next_run_at = _next_run_at(send_time) if task.enabled else None
+            await task.save()
+            await SparkTaskTargetIdentity.update_or_create(task_id=task.id, defaults={'sec_uid': stable_target})
+            await enqueue(task.id)
         await self.audit.write(owner_id, "task.updated", "spark_task", task.id)
-        await sync_task(task.id)
+        await process_job(task.id)
         return task
 
     async def delete_owned(self, owner_id: str, task_id: str) -> None:

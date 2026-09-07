@@ -1,10 +1,14 @@
 import json
 import unittest
 from core.task.dispatcher import build_fc_schedule
-from aliyunFC.taskrunner.invoke_server import _extract_task_id
+from aliyunFC.taskrunner.invoke_server import _extract_task_id, _extract_scheduled_for
 
 
 class TestEventBridgePayload(unittest.TestCase):
+    def test_event_time_is_preserved_and_missing_time_rejected(self):
+        self.assertEqual(_extract_scheduled_for('{"time":"2026-09-07T05:00:00Z"}'), '2026-09-07T05:00:00Z')
+        with self.assertRaises(ValueError):
+            _extract_scheduled_for('{"task_id":"old-retry"}')
     def test_weekdays_keep_eventbridge_standard_numbering(self):
         schedule = build_fc_schedule({'task_id': 't1', 'cron_expr': '30 9 * * 1-5'}, bus_name='installed-bus', time_zone='GMT+8:00')
         self.assertEqual(schedule['schedule'], '0 30 9 * * 1-5')

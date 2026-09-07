@@ -4,6 +4,10 @@
 
 ## 上线前准备
 
+系统设置密钥也已改为加密存储。升级前请阅读[系统凭据与调度排查](system-settings-security.md)，使用原加密密钥初始化 `system_secrets` 表并迁移旧值。
+
+执行器现已升级到协议 v3。发布前请先阅读[执行可靠性与升级步骤](execution-reliability.md)，初始化新增表并同步更新任务执行器镜像；旧执行器会被后端拒绝。后台调度重试需按[调度队列](schedule-queue.md)部署持续唤醒入口。
+
 1. 安装根目录 `requirements.txt`，前端在 `panel` 中运行 `npm ci`、`npm run build`。单独打包 API 时也需安装 `server/requirements.txt`，并保留仓库内的 `aliyunFC/install/ros-template.yaml`。
 2. 配置共享的持久数据库 `DATABASE_URL`。Serverless 环境不能用临时 SQLite 文件保存安装状态。
 3. 在目标数据库上运行 `python -m core.db`，创建新增的 `installation`、`task_schedule_sync` 表及缺失的系统配置项。该命令不会覆盖已有配置；它不是通用的字段迁移工具。发布前备份数据库，在单独的初始化步骤执行，不要让每个请求执行建表。

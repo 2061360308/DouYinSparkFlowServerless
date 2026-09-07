@@ -31,12 +31,15 @@ class InternalApiClient:
             raise ApiClientError("SPARK_SERVICE_TOKEN 未配置")
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json", "X-Spark-Execution-Protocol": '3'}
 
     async def _request(self, method: str, path: str, json: Any = None) -> Any:
         url = f"{self.base_url}{path}"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.request(method, url, headers=self._headers(), json=json)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.request(method, url, headers=self._headers(), json=json)
+        except httpx.RequestError as error:
+            raise ApiClientError('内部服务暂时不可达') from error
         if resp.status_code >= 400:
             detail = resp.text
             try:
@@ -45,7 +48,10 @@ class InternalApiClient:
                 pass
             raise ApiClientError(f"{method} {path} -> {resp.status_code}: {detail}", resp.status_code)
         if resp.content:
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as error:
+                raise ApiClientError('内部服务返回了无效 JSON') from error
         return None
 
     # ---- 计划任务(通用调度层) ----
@@ -59,6 +65,18 @@ class InternalApiClient:
         await self._request("POST", f"/api/internal/scheduled-tasks/{task_id}/result", json={"ok": ok})
 
     # ---- 续火业务 ----
+    async def claim_execution(self, task_id: str, scheduled_for: str | None = None) -> dict:
+        return await self._request('POST', f'/api/internal/scheduled-tasks/{task_id}/claim', json={'scheduled_for': scheduled_for})
+
+    async def begin_send(self, run_id: str, token: str, message_digest: str) -> dict:
+        return await self._request('POST', f'/api/internal/executions/{run_id}/sending', json={'token': token, 'message_digest': message_digest})
+
+    async def finish_execution(self, run_id: str, token: str, status: str, reason: str = '') -> dict:
+        return await self._request('POST', f'/api/internal/executions/{run_id}/finish', json={'token': token, 'status': status, 'reason': reason})
+
+    async def record_receipt(self, run_id: str, token: str, receipt: dict) -> dict:
+        return await self._request('POST', f'/api/internal/executions/{run_id}/receipt', json={**receipt, 'token': token})
+
     async def get_spark_task(self, spark_task_id: str) -> dict:
         return await self._request("GET", f"/api/internal/spark-tasks/{spark_task_id}")
 

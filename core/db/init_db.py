@@ -41,6 +41,10 @@ async def init_db() -> None:
     # 写入控制台默认种子数据（任务额度策略单例）
     await seed_console_defaults()
 
+    from .system_config_db import SystemConfigDB
+    # Already connected here; avoid the standalone connection wrapper.
+    await SystemConfigDB.migrate_secrets.__wrapped__()
+
     await Tortoise.close_connections()
     print("数据库初始化完成。")
 

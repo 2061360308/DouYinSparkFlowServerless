@@ -22,6 +22,8 @@ from core.services.task_capacity import TaskCapacityService
 from core.services.users import UserService
 from core.db import SystemConfigDB
 from core.db.config import SYSTEM_CONFIG_KEYS
+from core.db.config_secrets import SECRET_KEYS
+from core.db.models.installation import Installation
 from core.db.models import User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -228,7 +230,9 @@ async def set_task_limit(
 @router.get("/system-config", response_model=SystemConfigResponse)
 async def get_system_config(ctx: AuthContext = Depends(require_admin)) -> dict:
     """读取所有已注册的系统配置（缺记录时回落默认值）。"""
-    return {"values": await SystemConfigDB.get_many()}
+    result = await SystemConfigDB.public_values()
+    result['installation_credentials_active'] = await Installation.exists(id=1, status='CREATE_COMPLETE')
+    return result
 
 
 @router.put("/system-config", response_model=OkResponse)
@@ -237,5 +241,13 @@ async def update_system_config(
     ctx: AuthContext = Depends(admin_csrf),
 ) -> dict:
     """批量更新系统配置（键须在 SYSTEM_CONFIG_KEYS 中注册）。"""
-    await SystemConfigDB.set_many(body.values)
+    if set(body.clear_secret_keys) - SECRET_KEYS:
+        raise ValidationError('包含未知的密钥配置项')
+    if body.values.keys() - SYSTEM_CONFIG_KEYS.keys():
+        raise ValidationError('包含未知的系统配置项')
+    if any(body.values.get(key) for key in body.clear_secret_keys):
+        raise ValidationError('不能同时替换和清除同一密钥')
+    values = {k: v for k, v in body.values.items() if k not in SECRET_KEYS or v}
+    values.update({key: '' for key in body.clear_secret_keys})
+    await SystemConfigDB.set_many(values)
     return {"ok": True}

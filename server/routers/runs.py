@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from server.deps import AuthContext, current_user
 from server.schemas import ListRunsResponse
 from core.db.models import TaskRun, User
+from core.db.models.execution import ExecutionEvidence
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -21,6 +22,8 @@ async def list_runs(
     ctx: AuthContext = Depends(current_user),
 ) -> dict:
     is_admin = ctx.user.role == "admin"
+    from core.services.executions import expire_runs
+    await expire_runs(None if is_admin else ctx.user.id)
     query = TaskRun.all().select_related("task")
     if not is_admin:
         query = query.filter(task__owner_user_id=ctx.user.id)
@@ -42,9 +45,13 @@ async def list_runs(
                 owner_names[user.id] = user.username
 
     items = []
+    evidence_by_run = {e.run_id: e for e in await ExecutionEvidence.filter(run_id__in=[run.id for run in runs])}
     for run in runs:
         task = run.task
+        evidence = evidence_by_run.get(run.id)
         row = {
+            'delivery_level': evidence.level if evidence else 'unknown',
+            'delivery_observed_at': _iso(evidence.observed_at) if evidence else None,
             "id": run.id,
             "task_id": run.task_id,
             "target_name": task.target_name if task else None,

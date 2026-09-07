@@ -24,6 +24,7 @@ import {
   accountApi,
   taskApi,
   type AccountItem,
+  type ConversationItem,
   type Availability,
   type QuotaSummary,
   type TaskItem,
@@ -53,6 +54,39 @@ const editingId = ref<string | null>(null)
 const submitting = ref(false)
 const form = ref({ account_id: '', target_name: '', target_sec_uid: '', send_time: '', message_template: '' })
 const availability = ref<Availability | null>(null)
+const contacts = ref<ConversationItem[]>([])
+const contactsLoading = ref(false)
+const contactsSyncing = ref(false)
+const contactError = ref('')
+let contactVersion = 0
+const contactOptions = computed(() => contacts.value.filter(c => c.sec_uid).map(c => ({
+  label: `${c.name} · ${c.sec_uid!.slice(-8)}`, value: c.sec_uid!,
+})))
+
+async function loadContacts(sync = false) {
+  const version = ++contactVersion
+  const account = form.value.account_id
+  contacts.value = []
+  contactError.value = ''
+  if (!account || !showEdit.value) { contactsLoading.value = false; contactsSyncing.value = false; return }
+  contactsLoading.value = true
+  contactsSyncing.value = sync
+  try {
+    if (sync) await accountApi.syncConversations(account)
+    const result = await accountApi.conversations(account)
+    if (version === contactVersion) contacts.value = result.items
+  } catch (error) {
+    if (version === contactVersion) contactError.value = error instanceof ApiError ? error.detail : '好友列表加载失败，请重试'
+  } finally {
+    if (version === contactVersion) { contactsLoading.value = false; contactsSyncing.value = false }
+  }
+}
+function selectContact(uid: string) {
+  const contact = contacts.value.find(c => c.sec_uid === uid)
+  form.value.target_sec_uid = contact?.sec_uid ?? ''
+  form.value.target_name = contact?.name.slice(0, 64) ?? ''
+}
+watch(() => [form.value.account_id, showEdit.value], () => loadContacts())
 
 const accountOptions = computed<SelectOption[]>(() =>
   accounts.value.map((a) => ({ label: a.display_name, value: a.id })),
@@ -161,12 +195,13 @@ watch(
     }, 250)
   },
 )
-onUnmounted(() => { availabilityVersion++; if (availTimer) clearTimeout(availTimer) })
+onUnmounted(() => { contactVersion++; availabilityVersion++; if (availTimer) clearTimeout(availTimer) })
 
 async function submit() {
   if (submitting.value) return
   if (!form.value.account_id) return message.warning('请选择抖音账号')
   if (!form.value.target_name.trim()) return message.warning('请填写好友名称')
+  if (!form.value.target_sec_uid) return message.warning('请选择带稳定 ID 的好友')
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.value.send_time)) return message.warning('请选择发送时间')
   if (!form.value.message_template.trim()) return message.warning('请填写消息内容')
   submitting.value = true
@@ -265,11 +300,17 @@ onMounted(load)
   >
     <n-form :model="form" label-placement="top">
       <n-form-item label="抖音账号">
-        <n-select v-model:value="form.account_id" :options="accountOptions" placeholder="选择账号" @update:value="form.target_sec_uid = ''" />
+        <n-select v-model:value="form.account_id" :options="accountOptions" placeholder="选择账号" @update:value="form.target_sec_uid = ''; form.target_name = ''" />
       </n-form-item>
       <n-form-item label="好友名称 / 备注">
-        <n-input v-model:value="form.target_name" maxlength="64" placeholder="聊天列表中显示的名称" @update:value="form.target_sec_uid = ''" />
+        <n-select :value="form.target_sec_uid || null" :options="contactOptions" filterable
+          :loading="contactsLoading" :disabled="contactsLoading" placeholder="选择已绑定 ID 的好友" @update:value="selectContact" />
       </n-form-item>
+      <n-alert v-if="contactError" type="warning">{{ contactError }}</n-alert>
+      <n-space style="margin-bottom: 16px">
+        <n-button :loading="contactsSyncing" :disabled="contactsLoading || !form.account_id" @click="loadContacts(true)">同步可见会话</n-button>
+        <n-text depth="3">只同步能识别 ID 的当前会话；缺失 ID 的旧任务需重新选择好友。</n-text>
+      </n-space>
       <n-form-item label="每日发送时间">
         <n-time-picker
           v-model:formatted-value="form.send_time"

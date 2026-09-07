@@ -15,6 +15,8 @@ import logging
 
 from core.api_client import get_client
 from core.task.registry import handler
+from core.task.execution_contract import message_fingerprint
+from core.handlers.recipient import RecipientError, select_recipient, verify_open_recipient
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,18 @@ WEB_CHAT_URL = "https://www.douyin.com/chat"
 CONVERSATION_ITEM_SELECTOR = ".conversationConversationItemwrapper"
 CONVERSATION_TITLE_SELECTOR = ".conversationConversationItemtitle"
 CHAT_EDITOR_SELECTOR = ".messageEditorimChatEditorContainer"
+MESSAGE_COUNT_JS = '''({text, baseline, editorSelector, conversationSelector}) => {
+  const candidates = [...document.querySelectorAll('body *')].filter(el =>
+    !el.closest(editorSelector) && !el.closest(conversationSelector) &&
+    el.getClientRects().length && (el.innerText || '').trim() === text.trim());
+  const leaves = candidates.filter(el => !candidates.some(child => child !== el && el.contains(child)));
+  return baseline == null ? leaves.length : leaves.length > baseline;
+}'''
+
+
+def _message_query(message, baseline=None):
+    return {'text': message, 'baseline': baseline, 'editorSelector': CHAT_EDITOR_SELECTOR,
+            'conversationSelector': CONVERSATION_ITEM_SELECTOR}
 
 
 def _parse_cookies(cookies_json: str, version: int):
@@ -38,27 +52,37 @@ def _parse_cookies(cookies_json: str, version: int):
     raise ValueError("无法识别的 cookie 格式")
 
 
-async def _select_and_send(page, target_name: str, message: str) -> None:
-    """打开会话列表→按标题匹配好友→输入消息→回车发送（移植自 web_chat）。"""
+async def _select_and_send(page, target_name: str, message: str, before_send, *, target_sec_uid: str = '') -> dict:
+    """Stable ID is mandatory; display name is presentation only."""
+    if not target_sec_uid:
+        raise RecipientError('任务未绑定好友稳定 ID，请同步好友列表并重新选择好友。')
     await page.goto(WEB_CHAT_URL, wait_until="domcontentloaded")
     await page.wait_for_selector(CONVERSATION_ITEM_SELECTOR, timeout=30000)
-    matched = None
-    for item in await page.locator(CONVERSATION_ITEM_SELECTOR).all():
-        try:
-            title = (await item.locator(CONVERSATION_TITLE_SELECTOR).inner_text()).strip()
-        except Exception:  # noqa: BLE001
-            continue
-        if title == target_name:
-            matched = item
-            break
-    if matched is None:
-        raise RuntimeError(f"未在会话列表找到好友：{target_name}")
-    await matched.click()
+    await select_recipient(page, target_sec_uid, CONVERSATION_ITEM_SELECTOR)
     editor = page.locator(CHAT_EDITOR_SELECTOR).first
     await editor.wait_for(state="visible", timeout=30000)
-    await editor.click()
-    await page.keyboard.type(message)
-    await page.keyboard.press("Enter")
+    await verify_open_recipient(editor, target_sec_uid, CONVERSATION_ITEM_SELECTOR)
+    # Count exact text outside the editor before composing; old messages cannot confirm a new send.
+    baseline = await page.evaluate(MESSAGE_COUNT_JS, _message_query(message))
+    await editor.fill(message)
+    await before_send()
+    await verify_open_recipient(editor, target_sec_uid, CONVERSATION_ITEM_SELECTOR)
+    try:
+        await editor.press('Enter')
+        await confirm_message_visible(page, editor, message, baseline)
+    except Exception:
+        return {'ok': False, 'status': 'uncertain', 'reason': '已进入发送阶段，但未确认新增消息。请检查聊天记录，不会自动重发。'}
+    return {'ok': True, 'status': 'submitted', 'reason': '编辑框已清空且页面出现新增消息；未验证服务端送达或对方已读。'}
+
+
+async def confirm_message_visible(page, editor, message: str, baseline: int, timeout: int = 15000):
+    """Page evidence only: editor clears and exact matching text count increases."""
+    handle = await editor.element_handle()
+    if handle is None:
+        raise RuntimeError('编辑框已离开页面')
+    await page.wait_for_function('(editor) => !editor.innerText.trim()', arg=handle, timeout=timeout)
+    # Text is passed as data, never interpolated into a selector or JavaScript source.
+    await page.wait_for_function(MESSAGE_COUNT_JS, arg=_message_query(message, baseline), timeout=timeout)
 
 
 @handler("douyin_spark")
@@ -66,6 +90,9 @@ async def run(task: dict) -> dict:
     client = get_client()
     params = task.get("params") or {}
     spark_task_id = params.get("spark_task_id")
+    execution = task.get('_execution')
+    if not execution or not execution.get('claimed'):
+        raise RuntimeError('缺少执行权，禁止发送')
     if not spark_task_id:
         raise ValueError("params.spark_task_id 缺失")
 
@@ -74,9 +101,7 @@ async def run(task: dict) -> dict:
     target_name = spark.get("target_name")
     message = spark.get("message_template") or "续火花"
     if not account_id:
-        await client.write_run(spark_task_id, "failed", stage="no_account",
-                               error_code="account_missing", error_summary="任务未绑定抖音账号")
-        return {"ok": False, "reason": "account_missing"}
+        return {"ok": False, 'status': 'failed', "reason": "任务未绑定抖音账号"}
 
     cookie_info = await client.get_account_cookies(account_id)
     context_kwargs, cookies = _parse_cookies(
@@ -86,14 +111,14 @@ async def run(task: dict) -> dict:
     br = await client.acquire_browser(f"douyin_{account_id}")
     ws_url, headers = br.get("ws_url"), br.get("headers") or {}
     if not ws_url:
-        await client.write_run(spark_task_id, "failed", stage="browser",
-                               error_code="browser_unavailable", error_summary="申请远程浏览器失败")
-        return {"ok": False, "reason": "browser_unavailable"}
+        return {"ok": False, 'status': 'failed', "reason": "申请远程浏览器失败"}
 
     # 延迟导入 playwright：仅执行时需要，导入本模块不强依赖
     from playwright.async_api import async_playwright
 
-    await client.write_run(spark_task_id, "running", stage="sending")
+    async def before_send():
+        await client.begin_send(execution['run_id'], execution['token'], message_fingerprint(spark))
+    result = None
     async with async_playwright() as pw:
         browser = await pw.chromium.connect_over_cdp(ws_url, headers=headers)
         try:
@@ -101,10 +126,14 @@ async def run(task: dict) -> dict:
             if cookies:
                 await context.add_cookies(cookies)
             page = await context.new_page()
-            await _select_and_send(page, target_name, message)
+            try:
+                result = await _select_and_send(page, target_name, message, before_send,
+                                                target_sec_uid=spark.get('target_sec_uid') or '')
+            except RecipientError as error:
+                result = {'ok': False, 'status': 'failed', 'reason': str(error)}
         finally:
-            await browser.close()
-
-    await client.write_run(spark_task_id, "success", stage="submitted")
-    logger.info("续火完成 spark_task=%s target=%s", spark_task_id, target_name)
-    return {"ok": True, "target": target_name}
+            try:
+                await browser.close()
+            except Exception:
+                logger.warning('浏览器连接关闭失败 spark_task=%s', spark_task_id)
+    return result
