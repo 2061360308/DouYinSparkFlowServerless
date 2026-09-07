@@ -81,3 +81,11 @@ async def account_conversations(
     )
     items.extend({"name": name, "sec_uid": None} for name in names if name not in aliases)
     return {"items": sorted(items, key=lambda item: item["name"])}
+
+
+@router.post('/{account_id}/conversations/sync')
+async def sync_account_conversations(account_id: str, ctx: AuthContext = Depends(user_csrf), services: Services = Depends(get_services)):
+    from core.services.contacts import sync_contacts
+    account = await AccountService(services.cookie_cipher).get_owned(ctx.user.id, account_id)
+    count = await sync_contacts(account, services.cookie_cipher)
+    return {'updated': count}

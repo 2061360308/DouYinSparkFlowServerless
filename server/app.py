@@ -21,6 +21,8 @@ async def lifespan(app: FastAPI):
     # 启动即建立并钉住数据库连接（serverless 冷启动一次，后续请求复用）
     await open_persistent()
     try:
+        from core.db.system_config_db import SystemConfigDB
+        await SystemConfigDB.migrate_secrets()
         yield
     finally:
         await close_persistent()

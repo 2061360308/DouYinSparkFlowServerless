@@ -28,6 +28,7 @@ TORTOISE_ORM = {
                 "core.db.models.system",
                 "core.db.models.installation",
                 "core.db.models.task_schedule",
+                "core.db.models.execution",
                 "core.db.models.browser",
                 "core.db.models.user",
                 "core.db.models.account",

@@ -10,17 +10,23 @@ export function formatDateTime(iso: string | null | undefined): string {
 }
 
 export const RUN_STATUS_LABEL: Record<string, string> = {
+  accepted: '服务端已接收',
   queued: '待执行',
   running: '执行中',
   success: '成功',
   failed: '失败',
   skipped: '已跳过',
+  submitted: '页面已显示',
+  uncertain: '待核实',
 }
 
 export const RUN_STATUS_TYPE: Record<string, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
+  accepted: 'info',
   queued: 'default',
   running: 'info',
   success: 'success',
   failed: 'error',
   skipped: 'warning',
+  submitted: 'info',
+  uncertain: 'warning',
 }

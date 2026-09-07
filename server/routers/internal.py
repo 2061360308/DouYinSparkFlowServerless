@@ -6,11 +6,13 @@ DB 只在本层(server)读写；任务函数不直连数据库。
 """
 
 from __future__ import annotations
+from datetime import datetime
+from typing import Literal
+from tortoise.exceptions import IntegrityError
 
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Header
+from pydantic import BaseModel, Field
+from core.services import executions
 
 from server.deps import Services, get_services, require_service
 from server.schemas import (
@@ -22,19 +24,73 @@ from server.schemas import (
     WriteRunResponse,
 )
 from core.task.crud import ScheduledTaskDB
-from core.timeutil import utcnow
 from core.db.models import (
     DouyinAccount,
     SparkTask,
     SparkTaskTargetIdentity,
-    TaskRun,
 )
 
 router = APIRouter(prefix="/api/internal", tags=["internal"], dependencies=[Depends(require_service)])
 
 
+@router.post('/schedules/reconcile')
+async def reconcile_schedules():
+    from core.services.task_scheduling import reconcile
+    return await reconcile(limit=10)
+
+
 class ResultBody(BaseModel):
     ok: bool
+
+
+class ClaimBody(BaseModel):
+    scheduled_for: str | None = Field(default=None, max_length=64)
+
+
+class ExecutionBody(BaseModel):
+    token: str = Field(min_length=32, max_length=128)
+
+
+class FinishBody(ExecutionBody):
+    status: str = Field(max_length=16)
+    reason: str = Field(default='', max_length=240)
+
+
+class SendingBody(ExecutionBody):
+    message_digest: str = Field(min_length=64, max_length=64)
+
+
+class ReceiptBody(ExecutionBody):
+    source: Literal['douyin_verified_adapter_v1']
+    level: Literal['accepted', 'delivered', 'read']
+    recipient_uid: str = Field(min_length=1, max_length=256)
+    message_digest: str = Field(min_length=64, max_length=64)
+    message_id: str = Field(min_length=1, max_length=256, pattern=r'^\S+$')
+    conversation_id: str = Field(min_length=1, max_length=256, pattern=r'^\S+$')
+    observed_at: datetime
+
+
+@router.post('/executions/{run_id}/receipt')
+async def record_execution_receipt(run_id: str, body: ReceiptBody):
+    try:
+        return await executions.record_receipt(run_id, body.token, body.model_dump(exclude={'token'}))
+    except IntegrityError:
+        raise HTTPException(409, '此服务端消息已绑定其他执行') from None
+
+
+@router.post('/scheduled-tasks/{task_id}/claim')
+async def claim_execution(task_id: str, body: ClaimBody):
+    return await executions.claim(task_id, body.scheduled_for)
+
+
+@router.post('/executions/{run_id}/sending')
+async def begin_send(run_id: str, body: SendingBody):
+    return await executions.begin_send(run_id, body.token, body.message_digest)
+
+
+@router.post('/executions/{run_id}/finish')
+async def finish_execution(run_id: str, body: FinishBody):
+    return await executions.finish(run_id, body.token, body.status, body.reason)
 
 
 class AcquireBody(BaseModel):
@@ -56,11 +112,13 @@ def _iso(value) -> str | None:
 
 # ---- 计划任务(通用调度层) ----
 @router.get("/scheduled-tasks/{task_id}", response_model=ScheduledTaskDetail)
-async def get_scheduled_task(task_id: str) -> dict:
+async def get_scheduled_task(task_id: str, x_spark_execution_protocol: str = Header(default='')) -> dict:
     task = await ScheduledTaskDB.get(task_id)
     if task is None:
         raise HTTPException(404, "scheduled task not found")
     if task['event_category'] == 'douyin_spark':
+        if x_spark_execution_protocol != '3':
+            raise HTTPException(409, '请更新任务执行器镜像：需要执行协议 v2')
         from core.services.task_scheduling import schedule_status
         spark = await SparkTask.get_or_none(id=(task.get('params') or {}).get('spark_task_id'))
         if not spark or not spark.enabled or not spark.douyin_account_id:
@@ -76,6 +134,8 @@ async def get_scheduled_task(task_id: str) -> dict:
 
 @router.post("/scheduled-tasks/{task_id}/started", response_model=OkResponse)
 async def scheduled_task_started(task_id: str) -> dict:
+    if ((await ScheduledTaskDB.get(task_id)) or {}).get('event_category') == 'douyin_spark':
+        raise HTTPException(409, '续火任务必须使用执行领取接口')
     resp = await ScheduledTaskDB.mark_started(task_id)
     if not resp["ok"]:
         raise HTTPException(404, resp["msg"])
@@ -84,6 +144,8 @@ async def scheduled_task_started(task_id: str) -> dict:
 
 @router.post("/scheduled-tasks/{task_id}/result", response_model=OkResponse)
 async def scheduled_task_result(task_id: str, body: ResultBody) -> dict:
+    if ((await ScheduledTaskDB.get(task_id)) or {}).get('event_category') == 'douyin_spark':
+        raise HTTPException(409, '续火任务必须使用带执行令牌的结果接口')
     resp = await ScheduledTaskDB.mark_result(task_id, ok=body.ok)
     if not resp["ok"]:
         raise HTTPException(404, resp["msg"])
@@ -92,7 +154,9 @@ async def scheduled_task_result(task_id: str, body: ResultBody) -> dict:
 
 # ---- 续火业务任务 ----
 @router.get("/spark-tasks/{spark_task_id}", response_model=TaskItem)
-async def get_spark_task(spark_task_id: str) -> dict:
+async def get_spark_task(spark_task_id: str, x_spark_execution_protocol: str = Header(default='')) -> dict:
+    if x_spark_execution_protocol != '3':
+        raise HTTPException(409, '请更新任务执行器镜像：需要执行协议 v2')
     task = await SparkTask.get_or_none(id=spark_task_id)
     if task is None:
         raise HTTPException(404, "spark task not found")
@@ -132,28 +196,7 @@ async def get_account_cookies(
 
 @router.post("/spark-tasks/{spark_task_id}/runs", response_model=WriteRunResponse)
 async def write_run(spark_task_id: str, body: RunBody) -> dict:
-    task = await SparkTask.get_or_none(id=spark_task_id)
-    if task is None:
-        raise HTTPException(404, "spark task not found")
-    scheduled_for = utcnow()
-    if body.scheduled_for:
-        try:
-            parsed = datetime.fromisoformat(body.scheduled_for)
-            scheduled_for = parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
-        except ValueError:
-            pass
-    finished = body.status in {"success", "failed", "skipped"}
-    run = await TaskRun.create(
-        task_id=task.id,
-        scheduled_for=scheduled_for,
-        status=body.status,
-        stage=body.stage or body.status,
-        started_at=utcnow(),
-        finished_at=utcnow() if finished else None,
-        error_code=body.error_code,
-        error_summary=(body.error_summary or None) and body.error_summary[:240],
-    )
-    return {"id": run.id}
+    raise HTTPException(410, '旧执行记录写入接口已停用，请更新执行器并使用 claim/sending/finish')
 
 
 # ---- 远程浏览器申请(经 BrowserManager, 集中并发计数) ----

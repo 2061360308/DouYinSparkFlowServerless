@@ -7,6 +7,15 @@
 from tortoise import fields, models
 
 
+class SystemSecret(models.Model):
+    key = fields.CharField(max_length=100, primary_key=True)
+    ciphertext = fields.BinaryField()
+    nonce = fields.BinaryField()
+
+    class Meta:
+        table = 'system_secrets'
+
+
 class SystemConfig(models.Model):
     """系统配置表（key-value 形式）。"""
 

@@ -29,6 +29,8 @@ from tortoise.transactions import in_transaction
 from .config import SYSTEM_CONFIG_KEYS
 from .connection import with_db
 from .models import SystemConfig
+from .models.system import SystemSecret
+from .config_secrets import SECRET_KEYS, encrypt, decrypt
 
 
 class _ConfigItemBase:
@@ -102,6 +104,10 @@ class SystemConfigDB:
     @with_db
     async def get_value(key: str, default: Optional[str] = None) -> Optional[str]:
         """按配置键读取原始字符串值；记录不存在或键未注册时返回 default。"""
+        if key in SECRET_KEYS:
+            secret = await SystemSecret.get_or_none(key=key)
+            if secret:
+                return decrypt(secret)
         row = await SystemConfig.get_or_none(config_key=key)
         return row.config_value if row is not None else default
 
@@ -121,7 +127,36 @@ class SystemConfigDB:
             "config_key", "config_value"
         )
         stored = {row["config_key"]: row["config_value"] for row in rows}
+        for secret in await SystemSecret.filter(key__in=list(SECRET_KEYS.intersection(key_list))):
+            stored[secret.key] = decrypt(secret)
         return {k: stored.get(k, SYSTEM_CONFIG_KEYS.get(k, "")) for k in key_list}
+
+    @staticmethod
+    @with_db
+    async def public_values() -> dict:
+        # No decryption on the admin read path, even when a key needs recovery.
+        values = await SystemConfigDB.get_many([k for k in SYSTEM_CONFIG_KEYS if k not in SECRET_KEYS])
+        configured = {}
+        for key in SECRET_KEYS:
+            legacy = await SystemConfig.get_or_none(config_key=key)
+            configured[key] = await SystemSecret.exists(key=key) or bool(legacy and legacy.config_value)
+            values[key] = ''
+        return {'values': values, 'secret_configured': configured}
+
+    @staticmethod
+    @with_db
+    async def migrate_secrets() -> None:
+        """Idempotent migration; encryption and clearing plaintext commit together."""
+        async with in_transaction():
+            for row in await SystemConfig.filter(config_key__in=list(SECRET_KEYS)).select_for_update():
+                if row.config_value:
+                    secret = await SystemSecret.get_or_none(key=row.config_key)
+                    if secret:
+                        decrypt(secret)  # Never discard a fallback if the primary cannot be read.
+                    else:
+                        await SystemSecret.create(key=row.config_key, **encrypt(row.config_key, row.config_value))
+                    row.config_value = ''
+                    await row.save(update_fields=['config_value'])
 
     @staticmethod
     @with_db
@@ -148,6 +183,14 @@ class SystemConfigDB:
                 f"未知系统配置键: {key!r}，可用键: {sorted(SYSTEM_CONFIG_KEYS)}"
             )
         text = "" if value is None else str(value)
+        if key in SECRET_KEYS:
+            async with in_transaction():
+                if text:
+                    await SystemSecret.update_or_create(key=key, defaults=encrypt(key, text))
+                else:
+                    await SystemSecret.filter(key=key).delete()
+                await SystemConfig.update_or_create(config_key=key, defaults={'config_value': ''})
+            return
         row = await SystemConfig.get_or_none(config_key=key)
         if row is None:
             await SystemConfig.create(config_key=key, config_value=text)

@@ -51,6 +51,15 @@ def _extract_task_id(raw: str) -> str | None:
     return None
 
 
+def _extract_scheduled_for(raw: str) -> str | None:
+    """Preserve the original CloudEvent time across delivery retries."""
+    event = json.loads(raw)
+    value = event.get('time') if isinstance(event, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('invalid event time')
+    return value
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802  健康探测
         self._send(200, {"status": "ok"})
@@ -64,12 +73,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "msg": "事件载荷缺少 task_id"})
             return
         try:
-            resp = asyncio.run(run_task(task_id))
+            scheduled_for = _extract_scheduled_for(raw)
+        except ValueError:
+            self._send(400, {'ok': False, 'msg': '事件必须携带原始计划时间 time'})
+            return
+        try:
+            resp = asyncio.run(run_task(task_id, scheduled_for))
         except Exception as error:  # noqa: BLE001
             logger.exception("run_task 异常 task_id=%s", task_id)
             self._send(500, {"ok": False, "msg": str(error)})
             return
-        self._send(200 if resp.get("ok") else 500, resp)
+        self._send(200 if resp.get("ok") or resp.get('retryable') is False else 500, resp)
 
     def _send(self, code: int, obj: dict) -> None:
         data = json.dumps(obj, ensure_ascii=False).encode("utf-8")

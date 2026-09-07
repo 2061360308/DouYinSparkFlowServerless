@@ -96,6 +96,8 @@ with TestClient(create_app()) as client:
     assert client.post('/api/install/deploy', json=body, headers=csrf).status_code == 404
     assert client.post('/api/install/refresh', headers=csrf).status_code == 404
     client.portal.call(change_role, 'admin')
+    from config_secrets_scenario import check_config_secrets
+    check_config_secrets(client, csrf)
     initial = client.get('/api/install/status').json()
     assert initial['needsInstall'] and initial['canDeploy'], initial
     assert client.post('/api/install/deploy', json=body).status_code == 403
@@ -197,5 +199,7 @@ with TestClient(create_app()) as client:
     assert state['installed'] and state['deployment']['stackId'] == 'remote-stack-1'
     from task_scheduling_scenario import check_scheduling
     check_scheduling(client, {'X-CSRF-Token': auth.json()['csrf_token']})
+    from task_admission_scenario import check_admission
+    client.portal.call(check_admission)
 
 print('Installation auth, validation, deduplication, restore, encryption and completion: PASS')
