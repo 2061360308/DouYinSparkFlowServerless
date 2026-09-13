@@ -96,6 +96,27 @@ def _client(payload: dict):
                           access_key_secret=payload['credentials']['accessKeySecret'])
 
 
+def _safe_error_summary(exc: Exception, payload: dict | None = None) -> str:
+    """从 ROS/阿里云 SDK 异常提炼面向管理员的摘要：脱敏 + 截断，不泄露令牌/凭据。"""
+    text = str(exc) or exc.__class__.__name__
+    code = str(getattr(exc, 'code', '') or '')
+    request_id = str(getattr(exc, 'request_id', '') or '')
+    secrets: list[str] = []
+    if payload:
+        credentials = payload.get('credentials') or {}
+        secrets.extend(str(v) for v in credentials.values() if v)
+        secrets.extend(str(v) for v in (payload.get('parameters') or {}).values() if v)
+    for secret in secrets:
+        if secret and len(secret) >= 8:
+            text = text.replace(secret, '[redacted]')
+    parts = [text.strip()[:500]]
+    if code and code not in text:
+        parts.append(f'code={code}')
+    if request_id:
+        parts.append(f'请求ID={request_id}')
+    return '；'.join(parts)
+
+
 def _view(row: Installation) -> dict:
     state = row.status
     if state in ('SUBMITTING', 'DELETE_REQUESTED') or state.endswith('_IN_PROGRESS'):
@@ -181,7 +202,10 @@ class InstallationService:
                 getattr(exc, 'request_id', None),
             )
             # Do not expose SDK request/credential details. Keep the token for recovery.
-            raise ValidationError('创建请求未确认成功，请恢复查询或重试同一部署；不会生成新的请求令牌') from None
+            raise ValidationError(
+                f'创建请求未确认成功：{_safe_error_summary(exc, payload)}；'
+                '请恢复查询或重试同一部署，不会生成新的请求令牌'
+            ) from None
         if not stack_id:
             raise ValidationError('ROS 未返回资源栈 ID，请恢复查询')
         await Installation.filter(id=1, client_token=row.client_token, stack_id='', status='SUBMITTING').update(stack_id=stack_id, status='CREATE_IN_PROGRESS')
@@ -232,7 +256,7 @@ class InstallationService:
         except Exception as exc:  # noqa: BLE001
             logger.exception('cleanup query failed: stack_id=%s code=%s request_id=%s',
                              row.stack_id, getattr(exc, 'code', None), getattr(exc, 'request_id', None))
-            raise ValidationError('清理请求未确认，请恢复查询；不会重建资源栈') from None
+            raise ValidationError(f'清理请求未确认：{_safe_error_summary(exc, payload)}；不会重建资源栈') from None
         await Installation.filter(id=1, client_token=row.client_token).update(status=row.status)
 
     @with_db
@@ -284,7 +308,7 @@ class InstallationService:
             except Exception as exc:  # noqa: BLE001
                 logger.exception('get stack status failed: stack_id=%s code=%s request_id=%s',
                                  row.stack_id, getattr(exc, 'code', None), getattr(exc, 'request_id', None))
-                raise ValidationError('暂时无法查询 ROS 状态，请稍后重试') from None
+                raise ValidationError(f'暂时无法查询 ROS 状态：{_safe_error_summary(exc, payload)}，请稍后重试') from None
         state = info.get('Status', 'UNKNOWN')
         outputs = {item['OutputKey']: item.get('OutputValue', '') for item in info.get('Outputs', []) if 'OutputKey' in item}
         # Both config and completion commit together. A delayed query cannot undo completion.
