@@ -7,8 +7,13 @@ PyYAML>=6.0
 alibabacloud-eventbridge20200401>=1.0.0
 fastapi>=0.116.0
 tortoise-orm>=0.21.0
-asyncpg>=0.29.0
 argon2-cffi>=23.1.0
 cryptography>=45.0.0
 httpx>=0.28.0
 playwright>=1.40.0
+# PostgreSQL：统一 psycopg 后端。Vercel 运行时自带 asyncpg 会覆盖 _vendor 副本，
+# 造成 connect() 的 channel_binding 参数不兼容而崩溃；psycopg 无此问题。
+# extras 语法(psycopg[binary])在 Vercel 解析不可靠，必须两行分开装；
+# 先装 psycopg-binary 提供预编译 libpq 轮子，psycopg 即可免编译源码安装。
+psycopg-binary>=3.1
+psycopg>=3.1
