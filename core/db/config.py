@@ -19,6 +19,12 @@ os.environ["TIMEZONE"] = "UTC"
 # 数据库连接地址：本地默认 SQLite，可通过 DATABASE_URL 切换为 PostgreSQL
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite://db.sqlite3")
 
+# Vercel 运行时会把自带的 asyncpg 覆盖到 _vendor，与 pip 安装的副本版本冲突，
+# 触发 connect() 的 channel_binding 参数不兼容而崩溃。PostgreSQL 统一走 psycopg
+# 后端，并把 postgres/postgresql/asyncpg scheme 归一化为 psycopg://，无需改连接串。
+if DATABASE_URL.startswith(("postgres://", "postgresql://", "asyncpg://")):
+    DATABASE_URL = "psycopg://" + DATABASE_URL.split("://", 1)[1]
+
 # Tortoise-ORM 全局配置（初始化脚本 / 应用入口 / 迁移工具共用）
 TORTOISE_ORM = {
     "connections": {"default": DATABASE_URL},

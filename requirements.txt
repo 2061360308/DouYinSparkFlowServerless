@@ -21,10 +21,10 @@ alibabacloud-eventbridge20200401>=1.0.0
 
 # 可选数据库驱动：
 # - SQLite（本地调试）：tortoise-orm 自带 aiosqlite 依赖，无需额外安装
-# - PostgreSQL（生产环境 / Vercel）：Tortoise 通过 asyncpg 连接
-# 固定 0.28：Vercel 运行时自带 asyncpg 与 _vendor 副本版本不一致时，
-# 新版 pool.py 传 channel_binding 会被旧 connect() 拒绝导致连库崩溃。
-asyncpg==0.28.0
+# - PostgreSQL（生产环境 / Vercel）：统一使用 psycopg 后端
+#   （Vercel 运行时会把自带的 asyncpg 覆盖到 _vendor，与 pip 安装的副本版本冲突，
+#   报 connect() 的 channel_binding 参数不兼容；psycopg 无此问题）
+psycopg[binary]>=3.1
 
 # 阿里云函数计算 FC 3.0 (OpenAPI 版本 2023-03-30) Python SDK
 # 安装全部三个包后 SDK 方可用；endpoint 形如 <主账号ID>.<region>.fc.aliyuncs.com

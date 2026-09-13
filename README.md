@@ -34,7 +34,7 @@ aliyunFC/ FC3 云函数 + ROS 模板 + taskrunner 执行器镜像
 
 | 变量 | 说明 |
 | --- | --- |
-| `DATABASE_URL` | 数据库连接串；生产必须用持久化数据库（serverless 不能依赖临时 SQLite）。默认 `sqlite://db.sqlite3` |
+| `DATABASE_URL` | 数据库连接串；生产必须用持久化数据库（serverless 不能依赖临时 SQLite）。默认 `sqlite://db.sqlite3`。PostgreSQL 连接串写成 `postgres://...` 即可，应用会自动归一化为 psycopg 后端 |
 | `SPARK_COOKIE_KEY_B64` | 固定 **32 字节** 的 Base64 密钥；加密抖音 cookie、登录输入、系统凭据、安装记录（AES-GCM）。更换会导致旧数据无法解密 |
 | `SPARK_SESSION_KEY_B64` | 固定 **≥32 字节** 的 Base64 密钥；会话 token 派生 |
 | `SPARK_SERVICE_TOKEN` | **≥32 字符** 的机器身份令牌；任务执行器访问 `/api/internal/*` 时校验 |
