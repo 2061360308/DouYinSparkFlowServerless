@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -27,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 CHAT_LOGIN_URL = "https://www.douyin.com/chat"
 
-CONFIRMING_TEXT = ("扫码成功", "请在手机上确认", "已扫码")
-VERIFICATION_TEXT = ("安全验证", "请完成验证", "手机验证", "短信验证")
+CONFIRMING_TEXT = ("扫码成功", "请在手机上确认", "需在手机上进行确认", "已扫码")
+VERIFICATION_TEXT = ("安全验证", "请完成验证", "手机验证", "短信验证", "接收短信验证码")
 QR_EXPIRED_TEXT = "二维码失效"
 SMS_CODE_INPUT_SELECTORS = (
     'input[placeholder*="验证码"]',
@@ -87,36 +89,41 @@ class DouyinScanService:
 
     async def get_status(
         self, owner_user_id: str, cipher: CookieCipher
-    ) -> tuple[str, dict[str, Any] | None]:
-        """返回 (status, account_dict)。status 可能为 succeeded / confirming /
-        verification_required / expired / awaiting_scan / loading_qr / failed。
-        succeeded 时会自动创建 DouyinAccount 并销毁浏览器。
+    ) -> tuple[str, dict[str, Any] | None, str | None]:
+        """返回 (status, account_dict, avatar_base64)。status 可能为 succeeded /
+        confirming / verification_required / expired / awaiting_scan / loading_qr / failed。
+        succeeded 时会自动创建 DouyinAccount 并销毁浏览器；confirming 时尝试返回头像 base64。
         """
         async with self._page() as page:
             status = await self._detect_status(page)
+            avatar_base64 = None
+            if status == "confirming":
+                avatar_base64 = await self._extract_avatar_base64(page)
+            if status == "verification_required":
+                await self._prepare_sms_verification(page)
             if status == "succeeded":
                 account = await self._finish_success(page, owner_user_id, cipher)
-                return "succeeded", account
-            return status, None
+                return "succeeded", account, None
+            return status, None, avatar_base64
 
     async def refresh_qr(self) -> tuple[str, str | None]:
         """代为点击刷新二维码，返回新二维码。"""
         async with self._page() as page:
+            # 有“二维码失效”字样则点击刷新，等待几秒后再取图
+            try:
+                expired = page.get_by_text(QR_EXPIRED_TEXT, exact=False).first
+                if await expired.is_visible(timeout=2_000):
+                    await expired.click(timeout=5_000)
+                    await asyncio.sleep(3)
+            except Exception as error:  # noqa: BLE001
+                logger.debug("未点击到二维码失效刷新入口: %s", error)
+
+            # 直接取当前二维码
             qr = await self._find_qr(page)
             if qr is not None:
-                try:
-                    await qr.click(timeout=3_000)
-                except Exception as error:  # noqa: BLE001
-                    logger.warning("点击刷新二维码失败: %s", error)
-            # 等待新二维码出现（最多 10 秒）
-            deadline = asyncio.get_running_loop().time() + 10
-            while asyncio.get_running_loop().time() < deadline:
-                qr = await self._find_qr(page)
-                if qr is not None:
-                    b64 = await self._qr_base64_from_element(qr)
-                    if b64 is not None:
-                        return "awaiting_scan", b64
-                await asyncio.sleep(0.3)
+                b64 = await self._qr_base64_from_element(qr)
+                if b64 is not None:
+                    return "awaiting_scan", b64
             return "loading_qr", None
 
     async def verify_code(self, code: str) -> str:
@@ -165,6 +172,32 @@ class DouyinScanService:
 
             await asyncio.sleep(0.5)
             return await self._detect_status(page)
+
+    async def get_resend_status(self) -> dict[str, Any]:
+        """获取重新发送验证码的倒计时状态。
+
+        返回 ``{"status": "countdown"|"clickable"|"unavailable", "seconds": int|None}``。
+        """
+        async with self._page() as page:
+            return await self._check_resend_state(page)
+
+    async def resend_code(self) -> dict[str, Any]:
+        """点击"重新发送"获取新验证码。
+
+        若仍在倒计时则返回 countdown；成功点击返回 clicked；否则返回 unavailable。
+        """
+        async with self._page() as page:
+            state = await self._check_resend_state(page)
+            if state["status"] == "countdown":
+                return state
+            if state["status"] == "clickable":
+                try:
+                    resend = page.get_by_text("重新发送", exact=True).first
+                    await resend.click(timeout=5_000)
+                    return {"status": "clicked", "seconds": None}
+                except Exception as error:  # noqa: BLE001
+                    logger.warning("点击重新发送失败: %s", error)
+            return {"status": "unavailable", "seconds": None}
 
     async def cancel(self) -> None:
         """释放浏览器。"""
@@ -245,6 +278,70 @@ class DouyinScanService:
         # 兜底：如果是普通 URL，暂不处理
         return None
 
+    async def _extract_avatar_base64(self, page: Page) -> str | None:
+        """从 ``#douyin_login_comp_scan_code img`` 提取用户头像并返回 base64。"""
+        try:
+            img = page.locator("#douyin_login_comp_scan_code img").first
+            if not await img.is_visible(timeout=2_000):
+                return None
+            src: str = await img.get_attribute("src") or ""
+            if not src or not src.startswith("http"):
+                return None
+            response = await page.context.request.get(src, timeout=10_000)
+            if not response.ok:
+                logger.warning("下载头像失败: %s %s", response.status, src)
+                return None
+            data = await response.body()
+            return base64.b64encode(data).decode("ascii")
+        except Exception as error:  # noqa: BLE001
+            logger.debug("提取头像失败: %s", error)
+            return None
+
+    async def _prepare_sms_verification(self, page: Page) -> None:
+        """触发短信验证码：先点击"接收短信验证码"，再确认输入框出现。"""
+        try:
+            btn = page.get_by_text("接收短信验证码", exact=True).first
+            if await btn.is_visible(timeout=1_000):
+                await btn.click(timeout=5_000)
+
+            # 点击后必须出现 placeholder 为"请输入验证码"的 #button-input
+            input_loc = page.locator("#button-input").first
+            await input_loc.wait_for(state="visible", timeout=5_000)
+            placeholder = await input_loc.get_attribute("placeholder") or ""
+            if "请输入验证码" not in placeholder:
+                logger.warning("验证码输入框占位符不符合预期: %s", placeholder)
+        except Exception as error:  # noqa: BLE001
+            logger.debug("准备短信验证失败: %s", error)
+
+    async def _check_resend_state(self, page: Page) -> dict[str, Any]:
+        """检查重新发送验证码状态。
+
+        返回 ``{"status": "countdown"|"clickable"|"unavailable", "seconds": int|None}``。
+        优先匹配 ``span`` 中的 ``xxs重新发送`` 倒计时文本；否则匹配可点击的"重新发送"。
+        """
+        # 模糊匹配形如 "60s重新发送" 的 span
+        try:
+            countdown = page.locator('span:text-matches("\\d+s重新发送")').first
+            if await countdown.is_visible(timeout=1_000):
+                text = await countdown.inner_text(timeout=1_000)
+                match = re.search(r"(\d+)s", text)
+                return {
+                    "status": "countdown",
+                    "seconds": int(match.group(1)) if match else None,
+                }
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 倒计时结束后出现的可点击"重新发送"
+        try:
+            resend = page.get_by_text("重新发送", exact=True).first
+            if await resend.is_visible(timeout=1_000):
+                return {"status": "clickable", "seconds": None}
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {"status": "unavailable", "seconds": None}
+
     async def _detect_status(self, page: Page) -> str:
         url = page.url
         if "/creator-micro/" in url or "/passport/account/info/" in url:
@@ -256,6 +353,16 @@ class DouyinScanService:
         except Exception:  # noqa: BLE001
             pass
         text = text or ""
+
+        # 二次短信验证：#uc-second-verify 下存在“接收短信验证码”说明已扫码确认，但需短信验证
+        try:
+            second_verify = page.locator("#uc-second-verify").first
+            if await second_verify.is_visible(timeout=1_000):
+                sms_btn = second_verify.locator("div:has-text('接收短信验证码')").first
+                if await sms_btn.is_visible(timeout=1_000):
+                    return "verification_required"
+        except Exception:  # noqa: BLE001
+            pass
 
         if any(t in text for t in VERIFICATION_TEXT):
             return "verification_required"

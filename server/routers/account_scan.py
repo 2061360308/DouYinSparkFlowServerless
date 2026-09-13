@@ -8,6 +8,8 @@ from server.deps import AuthContext, Services, current_user, get_services, user_
 from server.schemas import (
     OkResponse,
     ScanQrResponse,
+    ScanResendCodeResponse,
+    ScanResendStatusResponse,
     ScanStartBody,
     ScanStartResponse,
     ScanStatusResponse,
@@ -57,7 +59,7 @@ async def get_scan_status(
     services: Services = Depends(get_services),
 ) -> dict:
     try:
-        status, account = await _scan_service(sessionid).get_status(
+        status, account, avatar_base64 = await _scan_service(sessionid).get_status(
             ctx.user.id, services.cookie_cipher
         )
     except NotFound as error:
@@ -66,7 +68,7 @@ async def get_scan_status(
         raise HTTPException(400, str(error)) from error
     except ScanError as error:
         raise HTTPException(400, f"扫码失败: {error}") from error
-    return {"status": status, "account": account}
+    return {"status": status, "account": account, "avatar_base64": avatar_base64}
 
 
 @router.post("/{sessionid}/refresh-qr", response_model=ScanQrResponse)
@@ -94,6 +96,30 @@ async def verify_scan_code(
     except ValidationError as error:
         raise HTTPException(400, str(error)) from error
     return {"status": status}
+
+
+@router.get("/{sessionid}/resend-status", response_model=ScanResendStatusResponse)
+async def get_scan_resend_status(
+    sessionid: str,
+    ctx: AuthContext = Depends(current_user),
+) -> dict:
+    try:
+        result = await _scan_service(sessionid).get_resend_status()
+    except NotFound as error:
+        raise HTTPException(404, str(error)) from error
+    return result
+
+
+@router.post("/{sessionid}/resend-code", response_model=ScanResendCodeResponse)
+async def resend_scan_code(
+    sessionid: str,
+    ctx: AuthContext = Depends(user_csrf),
+) -> dict:
+    try:
+        result = await _scan_service(sessionid).resend_code()
+    except NotFound as error:
+        raise HTTPException(404, str(error)) from error
+    return result
 
 
 @router.post("/{sessionid}/cancel", response_model=OkResponse)

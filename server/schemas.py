@@ -243,6 +243,7 @@ class ScanQrResponse(BaseModel):
 class ScanStatusResponse(BaseModel):
     status: str
     account: AccountItem | None = None
+    avatar_base64: str | None = None
 
 
 class ScanVerifyCodeBody(BaseModel):
@@ -251,6 +252,16 @@ class ScanVerifyCodeBody(BaseModel):
 
 class ScanVerifyCodeResponse(BaseModel):
     status: str
+
+
+class ScanResendStatusResponse(BaseModel):
+    status: str
+    seconds: int | None = None
+
+
+class ScanResendCodeResponse(BaseModel):
+    status: str
+    seconds: int | None = None
 
 
 class SystemConfigResponse(BaseModel):
