@@ -158,7 +158,7 @@ class RosStackClient:
             region: 地域, 如 cn-hangzhou
             access_key_id / access_key_secret: AK/SK
             security_token: 使用 STS 临时凭证时传入
-            endpoint: ROS 接入地址, 默认 f"ros.{region}.aliyuncs.com"
+            endpoint: ROS 接入地址, 默认 ros.aliyuncs.com (中国区通用站点)
         """
         # ROS 接入点不按地域细分（官方：中国区一律 ros.aliyuncs.com），
         # 由阿里云根据请求中的 RegionId 路由；地域直连端点(ros.cn-hangzhou.aliyuncs.com)

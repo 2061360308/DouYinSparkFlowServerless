@@ -255,6 +255,8 @@ class CloudBackend:
             access_key_secret=self.sk,
             security_token=self.security_token,
             endpoint=endpoint,
+            # 海外网络(如 Vercel)到大陆链路延迟高，放宽连接/读取超时。
+            connect_timeout=10000, read_timeout=30000,
         ))
 
     def _resolve_account_id(self) -> str:
@@ -269,6 +271,7 @@ class CloudBackend:
             access_key_secret=self.sk,
             security_token=self.security_token,
             endpoint="sts.aliyuncs.com",
+            connect_timeout=10000, read_timeout=30000,
         ))
         resp = sts.get_caller_identity()
         self._account = getattr(resp.body, "account_id", "") or ""

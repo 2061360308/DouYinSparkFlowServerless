@@ -167,7 +167,8 @@ def _eb_client(config: dict | None = None):
     return Client(Config(
         access_key_id=ak, access_key_secret=sk,
         endpoint=f"eventbridge.{region}.aliyuncs.com",
-        connect_timeout=3000, read_timeout=10000,
+        # 海外网络(如 Vercel)到大陆链路延迟高，放宽连接/读取超时。
+        connect_timeout=10000, read_timeout=30000,
     ))
 
 
