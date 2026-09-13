@@ -5,14 +5,12 @@
     {
       "src": "panel/package.json",
       "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "config": { "outputDirectory": "dist" }
     }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "server/index.py" },
     { "handle": "filesystem" },
-    { "src": "/assets/(.*)", "dest": "panel/dist/assets/$1" },
-    { "src": "/(.*\\.[a-zA-Z0-9]+)", "dest": "panel/dist/$1" },
-    { "src": "/(.*)", "dest": "panel/dist/index.html" }
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
