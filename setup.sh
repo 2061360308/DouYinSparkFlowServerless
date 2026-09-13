@@ -32,13 +32,13 @@
 #   PROXY_NODE=日本高速04                      代理节点（clash 订阅）
 #   PROXY_PORT=7890                           代理混合端口（HTTP/SOCKS5）
 #   MIHOMO_VERSION=v1.19.30                   mihomo 版本
-#   CLASH_SUB_URL=...                         订阅地址（仅作参考记录）
+#   CLASH_SUB_URL=...                         订阅地址（可选，仅作参考记录）
 #
 #   OPENCODE_BIN=~/.opencode/bin/opencode     opencode 可执行文件路径
 #   OPENCODE_INSTALL_URL=https://opencode.ai/install
 #                                             （失败时自动经 GH_MIRROR 直接下载二进制）
 #   JUSTWOKER_BASE_URL=https://api.justwoker.icu/v1
-#   JUSTWOKER_API_KEY=sk-...                  JustWoker API Key（默认内置常用 Key）
+#   JUSTWOKER_API_KEY=sk-...                  JustWoker API Key（必填，通过环境变量注入）
 #   OPENCODE_TUI_CONFIG=~/.config/opencode/tui.json
 #                                             opencode 键位配置（ctrl+b 代替 esc）
 #
@@ -87,13 +87,13 @@ PROXY_PID="${PROXY_PID:-/run/mihomo.pid}"
 PROXY_LOG="/var/log/mihomo.log"
 PROXY_PORT="${PROXY_PORT:-7890}"
 PROXY_NODE="${PROXY_NODE:-日本高速04}"
-CLASH_SUB_URL="${CLASH_SUB_URL:-***REMOVED***}"
+CLASH_SUB_URL="${CLASH_SUB_URL:-}"
 # 日本高速04 节点（VLESS + REALITY + xtls-rprx-vision）
-PROXY_SERVER="${PROXY_SERVER:-***REMOVED***}"
-PROXY_UUID="${PROXY_UUID:-***REMOVED***}"
-PROXY_SNI="${PROXY_SNI:-***REMOVED***}"
-PROXY_PUBKEY="${PROXY_PUBKEY:-***REMOVED***}"
-PROXY_SHORTID="${PROXY_SHORTID:-***REMOVED***}"
+PROXY_SERVER="${PROXY_SERVER:-}"
+PROXY_UUID="${PROXY_UUID:-}"
+PROXY_SNI="${PROXY_SNI:-}"
+PROXY_PUBKEY="${PROXY_PUBKEY:-}"
+PROXY_SHORTID="${PROXY_SHORTID:-}"
 
 # opencode（AI 编码 CLI）+ JustWoker（Anthropic 兼容 API）
 # 注意: 网关的 Cloudflare WAF 会拦截 OpenAI 兼容端点 /v1/chat/completions(403),
@@ -104,7 +104,7 @@ OPENCODE_CONFIG="${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
 OPENCODE_TUI_CONFIG="${OPENCODE_TUI_CONFIG:-$HOME/.config/opencode/tui.json}"
 OPENCODE_INSTALL_URL="${OPENCODE_INSTALL_URL:-https://opencode.ai/install}"
 JUSTWOKER_BASE_URL="${JUSTWOKER_BASE_URL:-https://api.justwoker.icu/v1}"
-JUSTWOKER_API_KEY="${JUSTWOKER_API_KEY:-***REMOVED***}"
+JUSTWOKER_API_KEY="${JUSTWOKER_API_KEY:-}"
 
 # Chrome/Chromium 在 Debian 系常见的运行库
 SYSTEM_DEPS=(
@@ -598,6 +598,10 @@ write_proxy_env() {
 }
 
 setup_proxy() {
+    if [ -z "$PROXY_SERVER" ] || [ -z "$PROXY_UUID" ]; then
+        warn "未配置代理节点凭据（需设置 PROXY_SERVER/PROXY_UUID/PROXY_SNI 等环境变量），跳过代理安装"
+        return 0
+    fi
     install_mihomo
     gen_proxy_config
     start_proxy || return 1
@@ -724,8 +728,12 @@ write_opencode_config() {
     fi
     mkdir -p "$(dirname "$OPENCODE_CONFIG")"
 
-    log "写入 opencode 模型配置 (JustWoker): $OPENCODE_CONFIG ..."
-    JUSTWOKER_BASE_URL="$JUSTWOKER_BASE_URL" JUSTWOKER_API_KEY="$JUSTWOKER_API_KEY" \
+log "写入 opencode 模型配置 (JustWoker): $OPENCODE_CONFIG ..."
+if [ -z "$JUSTWOKER_API_KEY" ]; then
+    warn "JUSTWOKER_API_KEY 未设置，跳过 opencode 模型配置"
+    return 0
+fi
+JUSTWOKER_BASE_URL="$JUSTWOKER_BASE_URL" JUSTWOKER_API_KEY="$JUSTWOKER_API_KEY" \
         python3 - "$OPENCODE_CONFIG" <<'PY'
 import json
 import os
