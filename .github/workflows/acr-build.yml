@@ -37,28 +37,15 @@ jobs:
               - 'aliyunFC/taskrunner/**'
               - 'core/**'
 
-  build:
+  build-cloakbrowser:
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.forced == 'true' || needs.detect-changes.outputs[matrix.changed] == 'true' }}
+    if: ${{ needs.detect-changes.outputs.forced == 'true' || needs.detect-changes.outputs.cloakbrowser == 'true' }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - changed: cloakbrowser
-            label: cloakbrowser 镜像
-            acr_image: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless
-            context: aliyunFC/cloakbrowser
-            dockerfile: Dockerfile
-            version_file: aliyunFC/cloakbrowser/VERSION
-          - changed: taskrunner
-            label: taskrunner 镜像
-            acr_image: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/douyin_spark_runner
-            context: .
-            dockerfile: aliyunFC/taskrunner/Dockerfile
-            version_file: aliyunFC/taskrunner/VERSION
     env:
       ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
+      ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/cloakbrowser-serverless
+      VERSION_FILE: aliyunFC/cloakbrowser/VERSION
+      CONTEXT_DIR: aliyunFC/cloakbrowser
     steps:
       - uses: actions/checkout@v4
 
@@ -68,36 +55,87 @@ jobs:
       - name: 登录阿里云 ACR
         run: echo "${{ secrets.ACR_PASSWORD }}" | docker login --username="${{ secrets.ACR_USERNAME }}" --password-stdin "$ACR_REGISTRY"
 
-      - name: 构建并推送 ${{ matrix.label }}
+      - name: 构建并推送 cloakbrowser 镜像
         run: |
           set -euo pipefail
-          IMAGE_VERSION="$(cat "${{ matrix.version_file }}")"
-          cd "${{ matrix.context }}"
+          IMAGE_VERSION="$(cat "$VERSION_FILE")"
+          cd "$CONTEXT_DIR"
           # --provenance=false --sbom=false: 禁止 buildx 默认附加 SLSA attestation
           #   (会生成 unknown/unknown 平台的 OCI index, 0.1.0/latest 曾因此异常)
           # --output type=image,push=true,oci-mediatypes=false: 强制导出 docker
           #   schema2 manifest(而非 buildx 默认的 OCI), ACR 个人版控制台只认
           #   schema2, 否则层/大小显示空白。
           docker buildx build --provenance=false --sbom=false \
-            -f "${{ matrix.dockerfile }}" \
+            -f Dockerfile \
             --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
-            --output "type=image,name=${{ matrix.acr_image }}:${IMAGE_VERSION},push=true,oci-mediatypes=false" \
-            --output "type=image,name=${{ matrix.acr_image }}:latest,push=true,oci-mediatypes=false" \
+            --output "type=image,name=${ACR_IMAGE}:${IMAGE_VERSION},push=true,oci-mediatypes=false" \
+            --output "type=image,name=${ACR_IMAGE}:latest,push=true,oci-mediatypes=false" \
             .
 
-      - name: 校验 ACR 上 ${{ matrix.label }} tag 为单平台 manifest
+      - name: 校验 ACR 上 cloakbrowser 镜像 tag 为单平台 manifest
         run: |
           set -euo pipefail
-          IMAGE_VERSION="$(cat "${{ matrix.version_file }}")"
+          IMAGE_VERSION="$(cat "$VERSION_FILE")"
           for tag in "$IMAGE_VERSION" latest; do
-            echo "==> 校验 ${{ matrix.acr_image }}:$tag"
-            if ! out="$(docker manifest inspect "${{ matrix.acr_image }}:$tag" 2>/dev/null)"; then
-              echo "!! 无法读取 ${{ matrix.acr_image }}:$tag 的 manifest(push 可能未生效)" >&2
+            echo "==> 校验 ${ACR_IMAGE}:$tag"
+            if ! out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)"; then
+              echo "!! 无法读取 ${ACR_IMAGE}:$tag 的 manifest(push 可能未生效)" >&2
               exit 1
             fi
             if printf '%s' "$out" | grep -q '"manifests"'; then
               if printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
-                echo "!! ${{ matrix.acr_image }}:$tag 的 index 含 unknown 平台项(buildx provenance attestation), 请检查是否有其它流程覆盖" >&2
+                echo "!! ${ACR_IMAGE}:$tag 的 index 含 unknown 平台项(buildx provenance attestation), 请检查是否有其它流程覆盖" >&2
+                exit 1
+              fi
+              echo "==> OK: 多平台 index, 无 attestation"
+            else
+              echo "==> OK: 单平台 manifest"
+            fi
+          done
+
+  build-taskrunner:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.forced == 'true' || needs.detect-changes.outputs.taskrunner == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      ACR_REGISTRY: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com
+      ACR_IMAGE: crpi-yagm0mg4gyj902wq.cn-hangzhou.personal.cr.aliyuncs.com/oilu/douyin_spark_runner
+      VERSION_FILE: aliyunFC/taskrunner/VERSION
+      DOCKERFILE: aliyunFC/taskrunner/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 初始化 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录阿里云 ACR
+        run: echo "${{ secrets.ACR_PASSWORD }}" | docker login --username="${{ secrets.ACR_USERNAME }}" --password-stdin "$ACR_REGISTRY"
+
+      - name: 构建并推送 taskrunner 镜像
+        run: |
+          set -euo pipefail
+          IMAGE_VERSION="$(cat "$VERSION_FILE")"
+          # 上下文 = 仓库根(需 COPY core/), 通过 -f 指定 Dockerfile
+          docker buildx build --provenance=false --sbom=false \
+            -f "$DOCKERFILE" \
+            --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
+            --output "type=image,name=${ACR_IMAGE}:${IMAGE_VERSION},push=true,oci-mediatypes=false" \
+            --output "type=image,name=${ACR_IMAGE}:latest,push=true,oci-mediatypes=false" \
+            .
+
+      - name: 校验 ACR 上 taskrunner 镜像 tag 为单平台 manifest
+        run: |
+          set -euo pipefail
+          IMAGE_VERSION="$(cat "$VERSION_FILE")"
+          for tag in "$IMAGE_VERSION" latest; do
+            echo "==> 校验 ${ACR_IMAGE}:$tag"
+            if ! out="$(docker manifest inspect "$ACR_IMAGE:$tag" 2>/dev/null)"; then
+              echo "!! 无法读取 ${ACR_IMAGE}:$tag 的 manifest(push 可能未生效)" >&2
+              exit 1
+            fi
+            if printf '%s' "$out" | grep -q '"manifests"'; then
+              if printf '%s' "$out" | grep -qE '"os"[[:space:]]*:[[:space:]]*"unknown"'; then
+                echo "!! ${ACR_IMAGE}:$tag 的 index 含 unknown 平台项(buildx provenance attestation)" >&2
                 exit 1
               fi
               echo "==> OK: 多平台 index, 无 attestation"
