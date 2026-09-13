@@ -40,6 +40,15 @@ aliyunFC/ FC3 云函数 + ROS 模板 + taskrunner 执行器镜像
 | `SPARK_SERVICE_TOKEN` | **≥32 字符** 的机器身份令牌；任务执行器访问 `/api/internal/*` 时校验 |
 | `SPARK_PUBLIC_BASE_URL` | 控制台公开 **HTTPS** 地址；注入云函数模板 `ApiBaseUrl` |
 
+### 首管理员引导（可选，serverless 推荐）
+
+> 不配置则需用 CLI 离线创建：`python -m core create-admin <用户名> --password <密码>`
+
+| 变量 | 说明 |
+| --- | --- |
+| `SPARK_ADMIN_USERNAME` | 自动创建的首个管理员用户名（3–32 位字母/数字/下划线/短横线） |
+| `SPARK_ADMIN_PASSWORD` | 对应密码（≥10 位且含字母和数字）；登录后强制改密。数据库已有任何管理员时忽略 |
+
 > `SPARK_DEV_INSECURE` 生产必须**不设置**。缺失上述密钥时后端会随机生成，且安装接口会被拒绝（`/api/install/status` 返回缺失项）。
 
 ### 邮件通知（可选）

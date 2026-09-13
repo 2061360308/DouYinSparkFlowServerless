@@ -45,6 +45,8 @@ class Settings:
     resend_from: str = ""
     service_token: str = field(default="", repr=False)
     dev_insecure: bool = False
+    admin_username: str = ""
+    admin_password: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "Settings":
@@ -74,6 +76,8 @@ class Settings:
         service_token = environ.get("SPARK_SERVICE_TOKEN", "").strip()
         if not service_token and dev_insecure:
             service_token = os.urandom(24).hex()
+        admin_username = environ.get("SPARK_ADMIN_USERNAME", "").strip().lower()
+        admin_password = environ.get("SPARK_ADMIN_PASSWORD", "").strip()
         return cls(
             cookie_key=cookie_key,
             session_key=session_key,
@@ -86,6 +90,8 @@ class Settings:
             resend_from=resend_from,
             service_token=service_token,
             dev_insecure=dev_insecure,
+            admin_username=admin_username,
+            admin_password=admin_password,
         )
 
     @staticmethod
