@@ -13,6 +13,7 @@ db.sqlite3-*
 
 # 后端本地密钥（start-backend.sh 生成，切勿入库）
 .secrets/
+.env
 
 # 系统 / IDE
 .Trash-0/
