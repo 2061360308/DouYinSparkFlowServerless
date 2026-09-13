@@ -24,7 +24,11 @@ alibabacloud-eventbridge20200401>=1.0.0
 # - PostgreSQL（生产环境 / Vercel）：统一使用 psycopg 后端
 #   （Vercel 运行时会把自带的 asyncpg 覆盖到 _vendor，与 pip 安装的副本版本冲突，
 #   报 connect() 的 channel_binding 参数不兼容；psycopg 无此问题）
-psycopg[binary]>=3.1
+# 注意：Vercel 对 requirements.txt 的 extras 语法(psycopg[binary])解析不可靠，
+# 必须拆成两行。psycopg-binary 先装提供预编译 libpq 轮子，psycopg 检测到
+# 已安装 binary 后不会再去编译 C 扩展，避免无编译器环境下源码构建失败。
+psycopg-binary>=3.1
+psycopg>=3.1
 
 # 阿里云函数计算 FC 3.0 (OpenAPI 版本 2023-03-30) Python SDK
 # 安装全部三个包后 SDK 方可用；endpoint 形如 <主账号ID>.<region>.fc.aliyuncs.com
