@@ -160,13 +160,15 @@ class RosStackClient:
             security_token: 使用 STS 临时凭证时传入
             endpoint: ROS 接入地址, 默认 f"ros.{region}.aliyuncs.com"
         """
+        # ROS 接入点不按地域细分（官方：中国区一律 ros.aliyuncs.com），
+        # 由阿里云根据请求中的 RegionId 路由；地域直连端点(ros.cn-hangzhou.aliyuncs.com)
+        # 对海外网络（如 Vercel sin1）链路不通，故默认用通用站点。
         cfg = Config(
             access_key_id=access_key_id,
             access_key_secret=access_key_secret,
             security_token=security_token,
-            endpoint=endpoint or f"ros.{region}.aliyuncs.com",
-            # 函数可能处于海外网络（如 Vercel sin1），到大陆 ROS 端点链路延迟高，
-            # 3s 连接超时过短会误判不可达；放宽到 10s 连接 / 30s 读取。
+            endpoint=endpoint or "ros.aliyuncs.com",
+            # 函数可能处于海外网络到大陆链路延迟高，3s 连接超时过短会误判不可达。
             connect_timeout=10000, read_timeout=30000,
         )
         self.client = RosClient(cfg)
