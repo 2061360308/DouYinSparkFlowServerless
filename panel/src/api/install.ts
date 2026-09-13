@@ -75,3 +75,6 @@ export const cleanupInstallation = (confirmation: string) =>
   http.post<DeployStatus>('/api/install/cleanup', { confirmation })
 export const resetInstallation = (confirmation: string) =>
   http.post<{ ok: boolean }>('/api/install/reset', { confirmation })
+/** 丢弃从未创建资源栈的失败请求，允许重新填写部署配置。 */
+export const discardUnconfirmedInstallation = (confirmation: string) =>
+  http.post<{ ok: boolean }>('/api/install/discard', { confirmation })

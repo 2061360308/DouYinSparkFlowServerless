@@ -21,6 +21,20 @@ from core.cli import _create_admin
 from core.services import installation
 from server.app import create_app
 
+# 栈完成后 OpenAPI 预置 EventBridge 链路（真实建号需要云账号，此处离线假实现并记录入参）
+import aliyunFC.install.eventbridge_resources as _eb_resources
+
+provisioned = []
+
+
+def _fake_ensure_infrastructure(region: str, ak: str, sk: str, **kwargs):
+    assert region == 'cn-hangzhou'
+    assert ak == 'test-id' and sk == 'test-secret'
+    provisioned.append(kwargs)
+
+
+_eb_resources.ensure_infrastructure = _fake_ensure_infrastructure
+
 
 class FakeROS:
     calls = []
@@ -168,6 +182,13 @@ with TestClient(create_app()) as client:
     result = client.post('/api/install/refresh', headers=csrf)
     assert result.status_code == 200, result.text
     assert result.json()['status'] == 'CREATE_COMPLETE'
+    # EventBridge 链路在栈完成后经 OpenAPI 幂等预置（凭据、总线、触发地址一一对应）
+    assert len(provisioned) == 1
+    eb = provisioned[0]
+    assert eb['bus_name'] == 'DouyinSpark-bus'
+    assert eb['api_destination_name'] and eb['connection_name'] and eb['rule_name']
+    assert eb['task_trigger_url'] == 'https://task.example.test'
+    assert isinstance(eb['bearer'], str) and len(eb['bearer']) >= 32
     assert client.get('/api/install/status').json()['installed'] is True
     assert client.post('/api/install/cleanup', json=confirmation, headers=csrf).status_code == 409
     config = client.get('/api/admin/system-config').json()['values']

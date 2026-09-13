@@ -286,6 +286,52 @@ class InstallationService:
             await row.delete()
         return {'ok': True}
 
+    @with_db
+    async def discard_unconfirmed(self, confirmation: str) -> dict:
+        """丢弃从未创建资源栈的失败请求记录。
+
+        创建请求被 ROS 确定性拒绝（如模板校验失败）时记录始终停留在无栈 ID 状态，
+        恢复区既不允许清理也进不了重置，管理员只能手动删库。此入口专治这种死锁：
+
+        1. 先按原记录幂等重放一次 CreateStack——若当时其实创建成功会取回 stack_id，
+           此时拒绝丢弃并回写为正常恢复状态，避免产生无人管理的残留资源栈；
+        2. 重放依旧被拒绝＝云端确实没有资源，确认后删除记录，允许重新填写部署。
+        """
+        async with in_transaction():
+            row = await Installation.filter(id=1).select_for_update().first()
+            if not row:
+                raise NotFound('尚未提交部署')
+            if row.stack_id:
+                raise Conflict('该记录已创建资源栈，请走清理流程')
+        payload = _payload(row, self.settings)
+        try:
+            stack_id = await asyncio.to_thread(
+                _client(payload).create_stack,
+                template_body=payload['template'],
+                stack_name=payload['stackName'],
+                parameters=payload['parameters'],
+                client_token=row.client_token,
+            )
+        except Exception as exc:  # noqa: BLE001 - 重放被拒绝说明云端从未创建资源
+            logger.info('discard replay rejected: request_hash=%s code=%s request_id=%s',
+                        row.request_hash, getattr(exc, 'code', None), getattr(exc, 'request_id', None))
+            stack_id = ''
+        if stack_id:
+            async with in_transaction():
+                current = await Installation.filter(id=1).select_for_update().first()
+                if not current or current.client_token != row.client_token:
+                    raise Conflict('安装记录已变更，请刷新页面')
+                await Installation.filter(id=1).update(stack_id=stack_id, status='CREATE_IN_PROGRESS')
+            raise Conflict('该请求实际已在云端创建资源栈，请走恢复查询或清理流程')
+        if confirmation != 'DouyinSpark':
+            raise ValidationError('请输入 DouyinSpark（该请求从未取得资源栈 ID）')
+        async with in_transaction():
+            current = await Installation.filter(id=1).select_for_update().first()
+            if not current or current.client_token != row.client_token:
+                raise Conflict('安装记录已变更，请刷新页面')
+            await current.delete()
+        return {'ok': True}
+
     async def _provision_eventbridge(self, payload: dict, outputs: dict) -> None:
         """栈已创建完成后，幂等预置 EventBridge 事件总线/投递链路。
 

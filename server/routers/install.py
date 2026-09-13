@@ -63,3 +63,9 @@ async def cleanup(body: ConfirmBody, ctx: AuthContext = Depends(admin_csrf)) -> 
 @router.post('/reset')
 async def reset(body: ConfirmBody, ctx: AuthContext = Depends(admin_csrf)) -> dict:
     return await InstallationService(get_settings()).reset(body.confirmation)
+
+
+@router.post('/discard')
+async def discard(body: ConfirmBody, ctx: AuthContext = Depends(admin_csrf)) -> dict:
+    """丢弃从未创建资源栈的失败请求（创建请求被确定性拒绝时记录无法清理/重置的死锁出口）。"""
+    return await InstallationService(get_settings()).discard_unconfirmed(body.confirmation)

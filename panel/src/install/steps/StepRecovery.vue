@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NAlert, NButton, NFormItem, NInput, NSpace, useMessage } from 'naive-ui'
-import { cleanupInstallation, repairInstallCredentials, resetInstallation } from '../../api/install'
+import { cleanupInstallation, discardUnconfirmedInstallation, repairInstallCredentials, resetInstallation } from '../../api/install'
 import { useInstallStore } from '../useInstallForm'
 const emit = defineEmits<{ restored: [] }>()
 const store = useInstallStore()
@@ -13,8 +13,9 @@ const error = ref('')
 const expected = computed(() => store.deploy.stackId || 'DouyinSpark')
 const confirmed = computed(() => confirmation.value === expected.value)
 const deleted = computed(() => store.deploy.rawStatus === 'DELETE_COMPLETE')
+const unconfirmed = computed(() => !store.deploy.stackId)
 const canClean = computed(() => ['CREATE_FAILED', 'ROLLBACK_COMPLETE', 'ROLLBACK_FAILED', 'CREATE_ROLLBACK_COMPLETE', 'CREATE_ROLLBACK_FAILED', 'DELETE_FAILED', 'DELETE_REQUESTED'].includes(store.deploy.rawStatus))
-async function recover(action: 'credentials' | 'cleanup' | 'reset') {
+async function recover(action: 'credentials' | 'cleanup' | 'reset' | 'discard') {
   if (busy.value || !confirmed.value) return
   busy.value = true
   error.value = ''
@@ -23,6 +24,9 @@ async function recover(action: 'credentials' | 'cleanup' | 'reset') {
       await repairInstallCredentials(credentials.value, confirmation.value)
       credentials.value = { accessKeyId: '', accessKeySecret: '' }
       message.success('凭据已更新，继续查询原部署')
+    } else if (action === 'discard') {
+      await discardUnconfirmedInstallation(confirmation.value)
+      message.success('已丢弃未确认的请求，可以重新填写部署配置')
     } else if (action === 'cleanup') await cleanupInstallation(confirmation.value)
     else await resetInstallation(confirmation.value)
     emit('restored')
@@ -34,7 +38,9 @@ async function recover(action: 'credentials' | 'cleanup' | 'reset') {
   <section class="recovery">
     <h3>{{ deleted ? '旧资源已清理，可以重新配置' : '恢复这次部署' }}</h3>
     <p>当前状态：{{ store.deploy.rawStatus || '请求未确认' }}</p>
-    <n-alert v-if="!deleted" type="warning" :show-icon="false">凭据错误时，可更新同一阿里云账号的凭据后继续原部署。清理会删除下方资源栈及其资源，无法撤销；确认删除完成后才能重新配置。</n-alert>
+    <n-alert v-if="!deleted" type="warning" :show-icon="false">{{ unconfirmed
+    ? '此请求从未在云端创建资源栈（每次重试均被 ROS 校验拒绝）。确认后可丢弃本次请求，重新填写部署配置。'
+    : '凭据错误时，可更新同一阿里云账号的凭据后继续原部署。清理会删除下方资源栈及其资源，无法撤销；确认删除完成后才能重新配置。' }}</n-alert>
     <n-form-item :label="`输入 ${expected} 确认操作`" class="confirmation"><n-input v-model:value="confirmation" :placeholder="expected" :disabled="busy" /></n-form-item>
     <template v-if="!deleted">
       <div class="credentials">
@@ -44,6 +50,7 @@ async function recover(action: 'credentials' | 'cleanup' | 'reset') {
       <n-space>
         <n-button :loading="busy" :disabled="busy || !confirmed || !credentials.accessKeyId.trim() || !credentials.accessKeySecret.trim()" @click="recover('credentials')">更新凭据并恢复</n-button>
         <n-button v-if="canClean && store.deploy.stackId" type="error" secondary :disabled="busy || !confirmed" @click="recover('cleanup')">删除失败的资源栈</n-button>
+        <n-button v-if="unconfirmed" type="error" secondary :disabled="busy || !confirmed" @click="recover('discard')">丢弃未确认请求</n-button>
       </n-space>
     </template>
     <n-button v-else type="primary" :loading="busy" :disabled="busy || !confirmed" @click="recover('reset')">重新填写部署配置</n-button>
