@@ -165,7 +165,9 @@ class RosStackClient:
             access_key_secret=access_key_secret,
             security_token=security_token,
             endpoint=endpoint or f"ros.{region}.aliyuncs.com",
-            connect_timeout=3000, read_timeout=10000,
+            # 函数可能处于海外网络（如 Vercel sin1），到大陆 ROS 端点链路延迟高，
+            # 3s 连接超时过短会误判不可达；放宽到 10s 连接 / 30s 读取。
+            connect_timeout=10000, read_timeout=30000,
         )
         self.client = RosClient(cfg)
         self.region = region
