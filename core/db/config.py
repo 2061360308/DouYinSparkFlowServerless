@@ -5,6 +5,7 @@
 
 import os
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 # 统一进程时区为 UTC：Tortoise + SQLite 对 aware datetime 的本地化序列化会破坏
 # 范围比较，这里以 use_tz=False + 全程 naive-UTC 规避（PostgreSQL 亦一致）。
@@ -23,7 +24,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite://db.sqlite3")
 # 触发 connect() 的 channel_binding 参数不兼容而崩溃。PostgreSQL 统一走 psycopg
 # 后端，并把 postgres/postgresql/asyncpg scheme 归一化为 psycopg://，无需改连接串。
 if DATABASE_URL.startswith(("postgres://", "postgresql://", "asyncpg://")):
+    # Tortoise 会把 URL 查询参数原样当作 credentials 传给 psycopg_pool 构造器，
+    # 而 psycopg_pool 不接受这些 libpq 选项（channel_binding/sslmode 等全部查询参数）
+    # 导致 AsyncConnectionPool.__init__() 报错；TLS 由 psycopg 默认 sslmode=prefer
+    # 自动协商，因此归一化时直接丢弃全部查询参数。
     DATABASE_URL = "psycopg://" + DATABASE_URL.split("://", 1)[1]
+    _split = urlsplit(DATABASE_URL)
+    if _split.query:
+        DATABASE_URL = urlunsplit(_split._replace(query=""))
 
 # Tortoise-ORM 全局配置（初始化脚本 / 应用入口 / 迁移工具共用）
 TORTOISE_ORM = {
