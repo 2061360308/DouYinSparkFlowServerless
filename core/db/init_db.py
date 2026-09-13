@@ -16,15 +16,16 @@ import asyncio
 
 from tortoise import Tortoise
 
-from .config import SYSTEM_CONFIG_KEYS, TORTOISE_ORM
+from .config import DATABASE_URL, SYSTEM_CONFIG_KEYS, TORTOISE_ORM
 from .domain_init import create_console_indexes, seed_console_defaults
 from .models import SystemConfig
 
 
 async def init_db() -> None:
     """初始化数据库：建表并写入缺失的默认配置。"""
-    # 初始化数据库连接（_create_db=True：PostgreSQL 下若库不存在会自动创建）
-    await Tortoise.init(config=TORTOISE_ORM, _create_db=True)
+    # 仅 SQLite 开发时自动建库文件；PostgreSQL（含托管库）由服务商预建数据库，
+    # _create_db=True 会执行 CREATE DATABASE 报 DuplicateDatabase。
+    await Tortoise.init(config=TORTOISE_ORM, _create_db=DATABASE_URL.startswith("sqlite"))
 
     # 依据模型创建表结构（safe=True：已存在的表自动跳过）
     await Tortoise.generate_schemas(safe=True)

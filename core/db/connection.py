@@ -20,7 +20,7 @@ from typing import Any, Callable, TypeVar
 
 from tortoise import Tortoise
 
-from .config import TORTOISE_ORM
+from .config import DATABASE_URL, TORTOISE_ORM
 
 _conn_lock = asyncio.Lock()  # 保护初始化过程，避免并发重复连接
 _db_ready = False  # 连接是否已建立
@@ -40,10 +40,13 @@ async def _ensure_connected(enable_global_fallback: bool = False) -> None:
         return
     async with _conn_lock:
         if not _db_ready:
-            # _create_db=True：SQLite 文件或 PostgreSQL 库不存在时自动创建
+            # 自动建库仅用于本地 SQLite 开发；PostgreSQL（含 Neon 等托管库）
+            # 已由服务商预建数据库，_create_db=True 会执行 CREATE DATABASE 报
+            # DuplicateDatabase，表结构统一由 init_db（python -m core.db）创建。
+            _create_db = DATABASE_URL.startswith("sqlite")
             await Tortoise.init(
                 config=TORTOISE_ORM,
-                _create_db=True,
+                _create_db=_create_db,
                 _enable_global_fallback=enable_global_fallback,
             )
             _db_ready = True
