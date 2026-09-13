@@ -406,14 +406,12 @@ Resources:
           - HEAD
 
   # ===========================================================================
-  # 事件总线 (EventBridge): 计划任务(target_env=fc)定时调度规则挂载于此总线, 目标为本函数
+  # 事件总线 (EventBridge): 计划任务(target_env=fc)定时调度链路
+  # 说明: ROS 仅支持 ALIYUN::EventBridge::Rule, 不含 EventBus/Connection/
+  #   ApiDestination, 因此事件总线 + Connection + ApiDestination + Rule 由控制台
+  #   在部署完成后经 OpenAPI 幂等预置(见 aliyunFC/install/eventbridge_resources.py)。
+  #   此处仅保留参数声明与 EventBusName 输出, 供安装状态回写使用。
   # ===========================================================================
-  EventBus:
-    Type: ALIYUN::EventBridge::EventBus
-    Properties:
-      EventBusName:
-        Ref: EventBusName
-      Description: cloakbrowser scheduled-task event bus
 
   # ===========================================================================
   # 续火任务执行器函数 (FC3 自定义容器) + HTTP 触发器
@@ -489,78 +487,9 @@ Resources:
           - POST
 
   # ===========================================================================
-  # 事件投递: Connection(Bearer 鉴权) + ApiDestination(→触发器 URL) + Rule(acs.api.destination)
+  # 事件投递(Connection/ApiDestination/Rule): 由控制台经 OpenAPI 幂等预置,
+  # 见 aliyunFC/install/eventbridge_resources.py::ensure_infrastructure
   # ===========================================================================
-  EventBridgeConnection:
-    Type: ALIYUN::EventBridge::Connection
-    Properties:
-      ConnectionName:
-        Ref: ConnectionName
-      Description: 调用续火任务执行器 HTTP 触发器(Bearer 鉴权)
-      AuthParameters:
-        AuthorizationType: API_KEY_AUTH
-        ApiKeyAuthParameters:
-          ApiKeyName: Authorization
-          ApiKeyValue:
-            Fn::Join:
-              - ''
-              - - 'Bearer '
-                - Ref: BearerToken
-      NetworkParameters:
-        NetworkType: PublicNetwork
-
-  EventBridgeApiDestination:
-    Type: ALIYUN::EventBridge::ApiDestination
-    DependsOn:
-      - EventBridgeConnection
-      - TaskTrigger
-    Properties:
-      ApiDestinationName:
-        Ref: ApiDestinationName
-      ConnectionName:
-        Fn::GetAtt:
-          - EventBridgeConnection
-          - ConnectionName
-      Description: API 端点 - 指向续火任务执行器 HTTP 触发器
-      HttpApiParameters:
-        Endpoint:
-          Fn::GetAtt:
-            - TaskTrigger
-            - UrlInternet
-        Method: POST
-
-  ScheduleRule:
-    Type: ALIYUN::EventBridge::Rule
-    DependsOn:
-      - EventBus
-      - EventBridgeApiDestination
-    Properties:
-      EventBusName:
-        Ref: EventBusName
-      RuleName:
-        Ref: RuleName
-      Status: ENABLE
-      Description: 定时事件源(task_id) → API 端点调用续火任务执行器触发器
-      FilterPattern: {}
-      Targets:
-        - Id: taskrunner-api-destination
-          Type: acs.api.destination
-          Endpoint:
-            Fn::Sub: acs:api-destination:${ALIYUN::Region}:${ALIYUN::AccountId}:name/${ApiDestinationName}
-          PushRetryStrategy: BACKOFF_RETRY
-          ErrorsTolerance: NONE
-          ParamList:
-            - ResourceKey: Name
-              Form: CONSTANT
-              Value:
-                Ref: ApiDestinationName
-            - ResourceKey: HeaderParameters
-              Form: TEMPLATE
-              Value: '{"headerKey1":"Content-Type","headerValue1":"application/json"}'
-              Template: '{"${headerKey1}":"${headerValue1}"}'
-            - ResourceKey: BodyParameters
-              Form: ORIGINAL
-              Value: ''
 
 Outputs:
   TriggerUrlInternet:
@@ -582,9 +511,9 @@ Outputs:
         - Function
         - FunctionName
   EventBusName:
-    Description: EventBridge 事件总线名称 (计划任务定时调度用)
+    Description: EventBridge 事件总线名称 (计划任务定时调度用, 控制台经 OpenAPI 预置)
     Value:
-      Ref: EventBus
+      Ref: EventBusName
   TaskFunctionName:
     Description: 续火任务执行器函数名称
     Value:
@@ -597,25 +526,3 @@ Outputs:
       Fn::GetAtt:
         - TaskTrigger
         - UrlInternet
-  ScheduleRuleName:
-    Description: 定时调度规则名称
-    Value:
-      Ref: RuleName
-  ScheduleRuleARN:
-    Description: 定时调度规则 ARN
-    Value:
-      Fn::GetAtt:
-        - ScheduleRule
-        - RuleARN
-  ApiDestinationName:
-    Description: EventBridge API 端点名称
-    Value:
-      Fn::GetAtt:
-        - EventBridgeApiDestination
-        - ApiDestinationName
-  ConnectionName:
-    Description: EventBridge 连接配置名称
-    Value:
-      Fn::GetAtt:
-        - EventBridgeConnection
-        - ConnectionName

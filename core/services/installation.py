@@ -286,6 +286,35 @@ class InstallationService:
             await row.delete()
         return {'ok': True}
 
+    async def _provision_eventbridge(self, payload: dict, outputs: dict) -> None:
+        """栈已创建完成后，幂等预置 EventBridge 事件总线/投递链路。
+
+        ROS 模板只创建 FC 资源；事件总线、Connection、ApiDestination、Rule 均走
+        OpenAPI 补齐（模板校验不支持这三种资源类型）。一次性失败抛 ValidationError，
+        错误会透出到前端，恢复查询时幂等重试。
+        """
+        from aliyunFC.install.eventbridge_resources import ensure_infrastructure
+
+        params = payload['parameters']
+        try:
+            await asyncio.to_thread(
+                ensure_infrastructure,
+                payload['region'],
+                payload['credentials']['accessKeyId'],
+                payload['credentials']['accessKeySecret'],
+                bus_name=params['EventBusName'],
+                connection_name=params['ConnectionName'],
+                api_destination_name=params['ApiDestinationName'],
+                rule_name=params['RuleName'],
+                task_trigger_url=outputs['TaskTriggerUrlInternet'],
+                bearer=params['BearerToken'],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('provision eventbridge failed: request_hash=%s code=%s request_id=%s',
+                             payload.get('request_hash'), getattr(exc, 'code', None),
+                             getattr(exc, 'request_id', None))
+            raise ValidationError(f'事件总线链路准备失败：{_safe_error_summary(exc, payload)}，请稍后重试') from None
+
     @with_db
     async def refresh(self) -> dict:
         row = await Installation.get_or_none(id=1)
@@ -311,6 +340,8 @@ class InstallationService:
                 raise ValidationError(f'暂时无法查询 ROS 状态：{_safe_error_summary(exc, payload)}，请稍后重试') from None
         state = info.get('Status', 'UNKNOWN')
         outputs = {item['OutputKey']: item.get('OutputValue', '') for item in info.get('Outputs', []) if 'OutputKey' in item}
+        if state == 'CREATE_COMPLETE' and all(isinstance(outputs.get(key), str) and outputs[key] for key in OUTPUT_CONFIG):
+            await self._provision_eventbridge(payload, outputs)
         # Both config and completion commit together. A delayed query cannot undo completion.
         async with in_transaction():
             current = await Installation.filter(id=1).select_for_update().first()
