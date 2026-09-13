@@ -12,7 +12,7 @@
 # 构建上下文 = 仓库根（需 COPY core/）：
 #   docker build -f aliyunFC/taskrunner/Dockerfile -t <img> .
 # =============================================================================
-ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
 ARG IMAGE_VERSION=0.0.0-dev
@@ -20,21 +20,13 @@ LABEL org.opencontainers.image.title="douyinspark-taskrunner" \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.description="续火计划任务执行器(FC3 事件函数): connect_over_cdp 驱动远程浏览器, 经内部 API 取数"
 
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG APT_MIRROR=mirrors.ustc.edu.cn
-
 # playwright 自带的 node driver 运行需要少量系统库（connect_over_cdp 不下载浏览器）
-RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-      sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
-    else \
-      sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
-    fi \
-    && apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
        ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 # 仅需 playwright(客户端, 不装 chromium) + httpx
-RUN pip install --no-cache-dir --index-url ${PIP_INDEX_URL} "playwright==1.56.0" "httpx==0.28.1"
+RUN pip install --no-cache-dir "playwright==1.56.0" "httpx==0.28.1"
 
 WORKDIR /app
 COPY core/ ./core/

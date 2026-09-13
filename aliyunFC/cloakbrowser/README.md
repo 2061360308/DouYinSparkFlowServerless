@@ -56,8 +56,7 @@ docker push "$IMG:$VER"
 docker push "$IMG:latest"
 ```
 
-常用可覆盖构建参数（国内构建节点友好，默认已走 DaoCloud 基镜像 / 阿里云 pip /
-中科大 apt / GitHub 加速镜像）：
+常用可覆盖构建参数（默认直连官方源：Docker Hub 基础镜像 / PyPI / GitHub）：
 
 | 构建参数 | 说明 |
 | --- | --- |
@@ -65,9 +64,9 @@ docker push "$IMG:latest"
 | `CLOAK_CHROMIUM_VERSION` | 浏览器版本（默认 `146.0.7680.177.5`） |
 | `CLOAK_BINARY_SHA256` | 对应 asset 的 sha256 下载校验（勿改错） |
 | `CLOAK_DOWNLOAD_URL` | 自建 OSS/内网完整下载 URL（最优先） |
-| `CLOAK_DOWNLOAD_MIRRORS` | GitHub 加速镜像前缀列表（空格分隔，依次 fallback） |
+| `CLOAK_DOWNLOAD_MIRRORS` | GitHub 加速镜像前缀列表（空格分隔，依次 fallback；默认直连官方） |
 | `ENABLE_HEADED` | `true` 时多装 Xvfb/openbox（headed 可视化） |
-| `PIP_INDEX_URL` / `APT_MIRROR` | pip / apt 镜像源 |
+| `PIP_INDEX_URL` | pip 源（默认官方 PyPI） |
 
 > 若在 ACR/CI 构建节点直连 github.com 下载大文件很慢，请把
 > `CLOAK_DOWNLOAD_MIRRORS` 换成可达的加速源，或用 `CLOAK_DOWNLOAD_URL` 指向

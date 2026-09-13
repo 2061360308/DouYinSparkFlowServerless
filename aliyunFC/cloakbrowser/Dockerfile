@@ -18,12 +18,12 @@
 #   - 默认预置 Windows 默认字体(伪装 Windows 的字体指纹自洽, 见第 2 步:
 #     ENABLE_WINDOWS_FONTS=false 可跳过以省 ~230MB 镜像体积)。
 #
-# 国内构建节点适配:
-#   - 无 docker.io 依赖: 基础镜像走 DaoCloud 公共代理, pip 走阿里云,
-#     Chromium/Windows 字体均走 GitHub 加速镜像(CNB/ACR 节点已验证可 clone github.com);
+# 构建说明:
+#   - 无 docker.io 依赖: 基础镜像用官方 python:3.12-slim, 依赖均走官方源
+#     (pip=PyPI, apt=官方 mirror), Chromium/Windows 字体直连官方 GitHub;
 #   - 不用 # syntax=docker/dockerfile:1(BuildKit 前端镜像会从 docker.io 拉取)。
 # =============================================================================
-ARG PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
 # ---- 镜像版本(单一事实来源: 仓库根目录的 VERSION 文件) ---------------------
@@ -44,20 +44,15 @@ ARG CLOAK_BINARY_SHA256=4a12bcde95fa1bb1beef2b41ab5e5c27c36be78e3be3d0dac8c64d70
 #   2. CLOAK_DOWNLOAD_MIRRORS  GitHub 加速镜像前缀列表(空格分隔), 依次拼在官方
 #      直链前尝试, 例: https://ghfast.top/ https://gh-proxy.com/
 #   3. 官方直链 https://github.com/... (最后兜底)
-# 国内 ACR/CNB 构建节点直连 github.com 下载 207MB 大文件经常极慢/超时,
-# 默认开启常用加速镜像; 仍失败请在 ACR 构建参数里换用自建源或其它可用代理。
+# GitHub 构建节点默认直连官方源即可; 其它节点下载慢时可在构建参数里指定镜像。
 ARG CLOAK_DOWNLOAD_URL=""
-ARG CLOAK_DOWNLOAD_MIRRORS="https://gh.07150721.xyz/ https://ghfast.top/ https://gh-proxy.com/ https://ghproxy.net/"
+ARG CLOAK_DOWNLOAD_MIRRORS=""
 # 单个下载源的总超时(秒): 加速镜像一般几分钟内完成, 官方直连慢时会卡满此值
 ARG CLOAK_DOWNLOAD_TIMEOUT=600
 # 是否安装 headed 模式依赖(Xvfb/openbox/xdotool), 默认不装(镜像更小)
 ARG ENABLE_HEADED=false
-# pip 镜像源(默认阿里云; 也可换腾讯云/清华源)
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-# apt 镜像源(默认中科大 debian 源 http://mirrors.ustc.edu.cn/debian; 也可换清华/腾讯云源)
-# 仅填域名即可: 下方 sed 会整站替换 deb.debian.org / security.debian.org
-ARG APT_MIRROR=mirrors.ustc.edu.cn
-
+# pip 源(默认官方 PyPI; 也可通过构建参数 PIP_INDEX_URL 换镜像)
+ARG PIP_INDEX_URL=https://pypi.org/simple/
 # 是否预置 Windows 默认字体(防检测关键: 伪装成 Windows 却缺 Segoe UI/
 # 微软雅黑 等字体 = 明显的机器特征, 字体指纹一看就露馅, 见 README"字体"一节)。
 # 默认从 GitHub 仓库 ErwinLiYH/all_win10_fonts(约 230MB/348 个文件, 与原
@@ -67,20 +62,15 @@ ARG ENABLE_WINDOWS_FONTS=true
 ARG WINDOWS_FONTS_URL=""
 # Windows 字体官方 tarball(可整体替换为其它全套字体仓库)
 ARG WINDOWS_FONTS_ARCHIVE="https://github.com/ErwinLiYH/all_win10_fonts/archive/refs/heads/main.tar.gz"
-# 字体下载加速镜像前缀(空格分隔), 依次拼在官方 tarball 前尝试
-ARG WINDOWS_FONTS_MIRRORS="https://gh.07150721.xyz/ https://ghfast.top/ https://gh-proxy.com/ https://ghproxy.net/"
+# 字体下载加速镜像前缀(空格分隔), 依次拼在官方 tarball 前尝试; GitHub 默认直连即可
+ARG WINDOWS_FONTS_MIRRORS=""
 # 可选: 字体 tarball 的 sha256(首次构建后 sha256sum 计算并回填, 此后强校验)
 ARG WINDOWS_FONTS_SHA256=""
 # 单个字体下载源的总超时(秒)
 ARG WINDOWS_FONTS_TIMEOUT=600
 
 # ---- 1. 系统运行库(Chromium 最小依赖集; 字体另见第 2 步) --------------------
-RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-      sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
-    else \
-      sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list; \
-    fi \
-    && apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
     libdbus-1-3 libdrm2 libxkbcommon0 libatspi2.0-0 libxcomposite1 \
     libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
