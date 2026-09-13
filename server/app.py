@@ -48,8 +48,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     await open_persistent()
     try:
-        from core.db.system_config_db import SystemConfigDB
-        await SystemConfigDB.migrate_secrets()
+        # serverless 无 CLI：幂等确保表结构/索引/默认配置就绪
+        from core.db.init_db import init_objects
+        await init_objects()
         await _bootstrap_admin(settings)
         yield
     finally:
