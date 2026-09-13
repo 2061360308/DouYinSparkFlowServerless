@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ from core.db.connection import with_db
 from core.db.models.installation import Installation
 from core.db.system_config_db import SystemConfigDB
 from core.services import Conflict, NotFound, ValidationError
+
+logger = logging.getLogger(__name__)
 
 TEMPLATE = Path(__file__).resolve().parents[2] / 'aliyunFC/install/ros-template.yaml'
 AAD = b'douyinspark-installation-v1'
@@ -170,7 +173,13 @@ class InstallationService:
                 _client(payload).create_stack, template_body=payload['template'],
                 stack_name=payload['stackName'], parameters=payload['parameters'], client_token=row.client_token,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - 底层 SDK/ROS 错误需入日志供排查
+            logger.exception(
+                'create stack failed: request_hash=%s code=%s request_id=%s',
+                row.request_hash,
+                getattr(exc, 'code', None),
+                getattr(exc, 'request_id', None),
+            )
             # Do not expose SDK request/credential details. Keep the token for recovery.
             raise ValidationError('创建请求未确认成功，请恢复查询或重试同一部署；不会生成新的请求令牌') from None
         if not stack_id:
@@ -220,7 +229,9 @@ class InstallationService:
                 raise Conflict('资源栈正在运行或创建，禁止按失败资源清理')
         except Conflict:
             raise
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logger.exception('cleanup query failed: stack_id=%s code=%s request_id=%s',
+                             row.stack_id, getattr(exc, 'code', None), getattr(exc, 'request_id', None))
             raise ValidationError('清理请求未确认，请恢复查询；不会重建资源栈') from None
         await Installation.filter(id=1, client_token=row.client_token).update(status=row.status)
 
@@ -270,7 +281,9 @@ class InstallationService:
         else:
             try:
                 info = await asyncio.to_thread(_client(payload).get_stack_status, row.stack_id)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                logger.exception('get stack status failed: stack_id=%s code=%s request_id=%s',
+                                 row.stack_id, getattr(exc, 'code', None), getattr(exc, 'request_id', None))
                 raise ValidationError('暂时无法查询 ROS 状态，请稍后重试') from None
         state = info.get('Status', 'UNKNOWN')
         outputs = {item['OutputKey']: item.get('OutputValue', '') for item in info.get('Outputs', []) if 'OutputKey' in item}
