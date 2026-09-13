@@ -8,11 +8,6 @@
       "config": { "outputDirectory": "dist" }
     }
   ],
-  "functions": {
-    "server/index.py": {
-      "maxDuration": 60
-    }
-  },
   "routes": [
     { "src": "/api/(.*)", "dest": "server/index.py" },
     { "handle": "filesystem" },
