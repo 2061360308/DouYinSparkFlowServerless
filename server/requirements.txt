@@ -17,3 +17,4 @@ playwright>=1.40.0
 # 先装 psycopg-binary 提供预编译 libpq 轮子，psycopg 即可免编译源码安装。
 psycopg-binary>=3.1
 psycopg>=3.1
+psycopg-pool>=3.1
