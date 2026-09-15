@@ -30,10 +30,18 @@ _EXISTS_CODES = {
 
 
 def _client(region: str, ak: str, sk: str) -> EbClient:
+    """构造 EventBridge 管控 API 客户端。
+
+    注意接入点必须是 eventbridge-console.{region}.aliyuncs.com，不能写成
+    eventbridge.{region}.aliyuncs.com：后者是老的 RESTful 接入点（路径形如
+    /openapi/createEventBus），而本 SDK 走 RPC 风格（Action 放 x-acs-action
+    请求头、路径固定为 /），打到该域名会被网关判为 InvalidRequestURL(400)。
+    """
     from alibabacloud_tea_openapi.models import Config as Cfg
     return EbClient(Cfg(
         access_key_id=ak, access_key_secret=sk,
-        endpoint=f"eventbridge.{region}.aliyuncs.com",
+        region_id=region,
+        endpoint=f"eventbridge-console.{region}.aliyuncs.com",
         connect_timeout=10000, read_timeout=30000,
     ))
 

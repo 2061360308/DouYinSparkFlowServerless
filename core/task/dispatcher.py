@@ -166,7 +166,11 @@ def _eb_client(config: dict | None = None):
         )
     return Client(Config(
         access_key_id=ak, access_key_secret=sk,
-        endpoint=f"eventbridge.{region}.aliyuncs.com",
+        region_id=region,
+        # 管控 API 接入点必须带 -console 前缀（RPC 风格）；写成
+        # eventbridge.{region}.aliyuncs.com 是老的 RESTful 域名，会返回
+        # InvalidRequestURL(400)。详见 aliyunFC/install/eventbridge_resources.py::_client。
+        endpoint=f"eventbridge-console.{region}.aliyuncs.com",
         # 海外网络(如 Vercel)到大陆链路延迟高，放宽连接/读取超时。
         connect_timeout=10000, read_timeout=30000,
     ))
